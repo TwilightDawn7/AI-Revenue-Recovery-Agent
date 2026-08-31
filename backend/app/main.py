@@ -16,6 +16,7 @@ from app.db.session import engine, Base, get_db
 from app.models.models import Merchant, Customer, Payment, Subscription, RecoveryCase, AIDecision, RecoveryAction, AuditLog
 from app.schemas.schemas import RecoveryCaseResponse, DashboardMetrics, AuditLogResponse
 from app.workflows.recovery import inngest_client, payment_recovery_workflow
+from app.services.razorpay.client import razorpay_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
@@ -191,15 +192,18 @@ async def process_razorpay_event_logic(event: str, payload: dict, db: Session) -
         # Trigger Inngest workflow ONLY for newly created cases to prevent infinite loops
         if is_new_case:
             logger.info(f"Triggering Inngest workflow for case: {case.id}")
-            await inngest_client.send(
-                inngest.Event(
-                    name="recovery/payment.failed",
-                    data={
-                        "case_id": case.id,
-                        "payment_id": payment.id
-                    }
+            try:
+                await inngest_client.send(
+                    inngest.Event(
+                        name="recovery/payment.failed",
+                        data={
+                            "case_id": case.id,
+                            "payment_id": payment.id
+                        }
+                    )
                 )
-            )
+            except Exception as ex:
+                logger.warning(f"Inngest event dispatch skipped or unavailable: {ex}")
         return {"status": "processed", "case_id": case.id, "action": "created_case"}
 
     elif event in ["payment.captured", "payment.authorized"]:
@@ -248,15 +252,18 @@ async def process_razorpay_event_logic(event: str, payload: dict, db: Session) -
 
             # Send event to resume the waiting Inngest step
             logger.info(f"Emitting Inngest event razorpay/payment.captured for case: {case.id}")
-            await inngest_client.send(
-                inngest.Event(
-                    name="razorpay/payment.captured",
-                    data={
-                        "payment_id": payment_id,
-                        "payment_link_id": payment_link_id
-                    }
+            try:
+                await inngest_client.send(
+                    inngest.Event(
+                        name="razorpay/payment.captured",
+                        data={
+                            "payment_id": payment_id,
+                            "payment_link_id": payment_link_id
+                        }
+                    )
                 )
-            )
+            except Exception as ex:
+                logger.warning(f"Inngest event dispatch skipped or unavailable: {ex}")
             return {"status": "processed", "case_id": case.id, "action": "sent_resume_event"}
 
     # Fallback response for unhandled events
@@ -343,6 +350,196 @@ async def manual_trigger_analysis(id: int, db: Session = Depends(get_db)):
         )
     )
     return {"status": "triggered", "message": f"Durable workflow triggered for Case #{id}"}
+
+
+@app.post("/api/recovery-cases/{id}/actions/retry")
+async def manual_retry_action(id: int, db: Session = Depends(get_db)):
+    """
+    Trigger an immediate payment charge retry action directly on the case.
+    """
+    case = db.query(RecoveryCase).filter(RecoveryCase.id == id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    case.retry_count += 1
+    case.status = "ACTION_PENDING"
+    
+    # Trigger Razorpay client retry
+    res = razorpay_client.trigger_retry(case.payment_id, case.amount_at_risk)
+    
+    # Record action
+    action = RecoveryAction(
+        recovery_case_id=case.id,
+        action_type="RETRY_PAYMENT",
+        attempt_number=case.retry_count,
+        external_reference=res.get("reference"),
+        status=res.get("status", "initiated"),
+        result_summary=res.get("message", "Manual payment retry initiated via operator console.")
+    )
+    db.add(action)
+    
+    # Record audit log
+    audit = AuditLog(
+        recovery_case_id=case.id,
+        event_type="OPERATOR_MANUAL_RETRY",
+        actor="HUMAN_OPERATOR",
+        payload={"attempt": case.retry_count, "result": res}
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(case)
+    
+    return {"status": "success", "message": f"Payment retry attempt #{case.retry_count} dispatched.", "case": case}
+
+
+@app.post("/api/recovery-cases/{id}/actions/payment-link")
+async def generate_payment_link_action(id: int, db: Session = Depends(get_db)):
+    """
+    Generate or send a Razorpay payment update link for the customer.
+    """
+    case = db.query(RecoveryCase).filter(RecoveryCase.id == id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    customer = case.customer or db.query(Customer).filter(Customer.id == case.customer_id).first()
+    cust_name = customer.name if customer else "Valued Customer"
+    cust_email = customer.email if customer else "customer@example.com"
+    
+    link_res = razorpay_client.create_payment_update_link(
+        customer_name=cust_name,
+        customer_email=cust_email,
+        amount=case.amount_at_risk,
+        case_id=case.id
+    )
+    
+    case.status = "WAITING"
+    
+    action = RecoveryAction(
+        recovery_case_id=case.id,
+        action_type="REQUEST_PAYMENT_UPDATE",
+        attempt_number=case.retry_count,
+        external_reference=link_res.get("payment_link_id"),
+        status=link_res.get("status", "created"),
+        result_summary=f"Payment link generated: {link_res.get('short_url')}"
+    )
+    db.add(action)
+    
+    audit = AuditLog(
+        recovery_case_id=case.id,
+        event_type="PAYMENT_LINK_CREATED",
+        actor="HUMAN_OPERATOR",
+        payload=link_res
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(case)
+    
+    return {"status": "success", "link": link_res, "case": case}
+
+
+@app.post("/api/recovery-cases/{id}/actions/escalate")
+async def manual_escalate_action(id: int, db: Session = Depends(get_db)):
+    """
+    Manually escalate a case to Human Operations.
+    """
+    case = db.query(RecoveryCase).filter(RecoveryCase.id == id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    case.status = "ESCALATED"
+    
+    action = RecoveryAction(
+        recovery_case_id=case.id,
+        action_type="ESCALATE_HUMAN",
+        attempt_number=case.retry_count,
+        status="escalated",
+        result_summary="Case manually escalated to Tier-2 Operations Desk."
+    )
+    db.add(action)
+    
+    audit = AuditLog(
+        recovery_case_id=case.id,
+        event_type="MANUAL_ESCALATION",
+        actor="HUMAN_OPERATOR",
+        payload={"reason": "Manual operator override to customer success"}
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(case)
+    
+    return {"status": "success", "message": "Case escalated to Human Operations.", "case": case}
+
+
+@app.post("/api/recovery-cases/{id}/actions/stop")
+async def manual_stop_action(id: int, db: Session = Depends(get_db)):
+    """
+    Stop automated recovery workflows for this case.
+    """
+    case = db.query(RecoveryCase).filter(RecoveryCase.id == id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    case.status = "STOPPED"
+    
+    action = RecoveryAction(
+        recovery_case_id=case.id,
+        action_type="STOP",
+        attempt_number=case.retry_count,
+        status="stopped",
+        result_summary="Recovery workflows permanently halted by operator."
+    )
+    db.add(action)
+    
+    audit = AuditLog(
+        recovery_case_id=case.id,
+        event_type="MANUAL_HALT",
+        actor="HUMAN_OPERATOR",
+        payload={"reason": "Operator manually stopped case"}
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(case)
+    
+    return {"status": "success", "message": "Case stopped safely.", "case": case}
+
+
+@app.post("/api/recovery-cases/{id}/actions/simulate-payment")
+async def simulate_payment_resolution(id: int, db: Session = Depends(get_db)):
+    """
+    Simulate incoming successful payment event that resolves this case to RECOVERED.
+    """
+    case = db.query(RecoveryCase).filter(RecoveryCase.id == id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    case.status = "RECOVERED"
+    case.recovered_amount = case.amount_at_risk
+    case.recovery_window_ended_at = datetime.utcnow()
+    
+    payment = db.query(Payment).filter(Payment.id == case.payment_id).first()
+    if payment:
+        payment.status = "captured"
+    
+    action = RecoveryAction(
+        recovery_case_id=case.id,
+        action_type="PAYMENT_CAPTURED",
+        attempt_number=case.retry_count,
+        status="captured",
+        result_summary=f"Full recovery confirmed! INR {case.amount_at_risk:,.2f} successfully captured via Razorpay."
+    )
+    db.add(action)
+    
+    audit = AuditLog(
+        recovery_case_id=case.id,
+        event_type="PAYMENT_RECOVERED",
+        actor="SIMULATOR",
+        payload={"amount": case.amount_at_risk, "payment_id": case.payment_id}
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(case)
+    
+    return {"status": "success", "message": f"Case #{id} marked as RECOVERED (INR {case.amount_at_risk:,.2f})", "case": case}
 
 
 # ==========================================
