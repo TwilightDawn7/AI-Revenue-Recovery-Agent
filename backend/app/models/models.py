@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, JSON, text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, JSON
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.db.session import Base
@@ -8,7 +9,7 @@ class Merchant(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     customers = relationship("Customer", back_populates="merchant", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="merchant", cascade="all, delete-orphan")
@@ -23,7 +24,7 @@ class Customer(Base):
     merchant_id = Column(Integer, ForeignKey("merchants.id"), nullable=False)
     name = Column(String, nullable=False)
     email = Column(String, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     merchant = relationship("Merchant", back_populates="customers")
     payments = relationship("Payment", back_populates="customer", cascade="all, delete-orphan")
@@ -42,8 +43,8 @@ class Payment(Base):
     status = Column(String, nullable=False)  # created, authorized, captured, refunded, failed
     failure_reason = Column(String, nullable=True)
     razorpay_reference = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, server_default=text("now()"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, server_default=func.now())
 
     merchant = relationship("Merchant", back_populates="payments")
     customer = relationship("Customer", back_populates="payments")
@@ -60,8 +61,8 @@ class Subscription(Base):
     status = Column(String, nullable=False)  # active, authenticated, charged, pending, halted, cancelled
     next_billing_date = Column(DateTime, nullable=True)
     razorpay_reference = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, server_default=text("now()"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, server_default=func.now())
 
     merchant = relationship("Merchant", back_populates="subscriptions")
     customer = relationship("Customer", back_populates="subscriptions")
@@ -80,10 +81,10 @@ class RecoveryCase(Base):
     amount_at_risk = Column(Float, nullable=False)
     status = Column(String, nullable=False, default="AT_RISK")  # AT_RISK, ANALYZING, ACTION_PENDING, WAITING, RECOVERED, FAILED, ESCALATED, STOPPED
     retry_count = Column(Integer, default=0)
-    recovery_window_started_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
+    recovery_window_started_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
     recovered_amount = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, server_default=text("now()"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, server_default=func.now())
 
     merchant = relationship("Merchant", back_populates="recovery_cases")
     customer = relationship("Customer", back_populates="recovery_cases")
@@ -106,7 +107,7 @@ class AIDecision(Base):
     confidence = Column(Float, nullable=False)
     reason = Column(String, nullable=False)
     model_name = Column(String, default="Gemini 3.5 Flash")
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     recovery_case = relationship("RecoveryCase", back_populates="ai_decisions")
 
@@ -121,7 +122,7 @@ class RecoveryAction(Base):
     status = Column(String, nullable=False)  # PENDING, EXECUTED, SUCCESS, FAILURE, BLOCKED
     external_reference = Column(String, nullable=True)  # Razorpay payment_link_id or new payment_id
     result_summary = Column(String, nullable=True)
-    executed_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
+    executed_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     recovery_case = relationship("RecoveryCase", back_populates="recovery_actions")
 
@@ -134,6 +135,6 @@ class AuditLog(Base):
     event_type = Column(String, nullable=False)  # CASE_CREATED, AI_DIAGNOSIS, POLICY_CHECK, ACTION_EXECUTED, WEBHOOK_RECEIVED, STATUS_CHANGED
     actor = Column(String, nullable=False)  # SYSTEM, AI, POLICY_ENGINE, MERCHANT, RAZORPAY_WEBHOOK
     payload = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, server_default=text("now()"))
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     recovery_case = relationship("RecoveryCase", back_populates="audit_logs")

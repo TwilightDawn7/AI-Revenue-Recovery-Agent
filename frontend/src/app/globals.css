@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --canvas: #08090D;
+    --surface-1: #0D1017;
+    --surface-2: #121722;
+    --surface-elevated: #161C2A;
+    --border: #23262D;
+    --border-subtle: #191D26;
+    
+    --text-primary: #F5F7FA;
+    --text-secondary: #C1C7D0;
+    --text-muted: #8B929E;
+    --text-faint: #4E5564;
+    
+    --color-ai: #8B7CFF;
+    --color-success: #22C55E;
+    --color-warning: #F59E0B;
+    --color-escalation: #F97316;
+    --color-danger: #EF4444;
+    --color-info: #38BDF8;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--canvas);
+    color: var(--text-primary);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  /* Tabular figures for financial numbers */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #08090D;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #23262D;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #353B47;
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid var(--color-ai);
+  outline-offset: 1px;
+}
