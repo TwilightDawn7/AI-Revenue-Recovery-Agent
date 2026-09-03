@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useMounted } from "@/hooks/use-mounted";
 import {
   useCaseDetail,
   useTriggerAnalysis,
@@ -50,6 +51,7 @@ export default function CaseDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params?.id as string;
+  const mounted = useMounted();
 
   const { data: caseItem, isLoading, isError, refetch } = useCaseDetail(id);
   const triggerAnalysis = useTriggerAnalysis();
@@ -152,7 +154,7 @@ export default function CaseDetailPage() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  if (isLoading) {
+  if (!mounted || isLoading) {
     return (
       <div className="space-y-6 animate-pulse">
         <div className="h-8 w-48 bg-[#161C2A] rounded" />
@@ -536,6 +538,60 @@ export default function CaseDetailPage() {
         )}
       </div>
 
+      {/* DECISION REPLAY STEPPER (Phase 10) */}
+      <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-[#23262D]">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-[#8B7CFF]" />
+            <h2 className="text-sm font-semibold text-[#F5F7FA]">
+              Agent Decision Replay Timeline
+            </h2>
+          </div>
+          <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+            Auditable Chain of Custody
+          </span>
+        </div>
+
+        {/* Horizontal Step Progression */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
+          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Step 1</span>
+            <span className="font-semibold text-rose-400 block truncate">Payment Failed</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">{caseItem.problem_type}</span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Step 2</span>
+            <span className="font-semibold text-sky-400 block truncate">Context Built</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">PII Sanitized</span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Step 3</span>
+            <span className="font-semibold text-[#8B7CFF] block truncate">AI Diagnosis</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">Gemini Reasoned</span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Step 4</span>
+            <span className="font-semibold text-[#8B7CFF] block truncate">EV Ranking</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">Candidate Actions</span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Step 5</span>
+            <span className={`font-semibold block truncate ${policyDecisionLabel === "APPROVED" ? "text-emerald-400" : "text-amber-400"}`}>Policy Gate</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">{policyDecisionLabel}</span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Step 6</span>
+            <span className="font-semibold text-[#F5F7FA] block truncate">Action Executed</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">{caseItem.recovery_actions?.[0]?.action_type || "Pending"}</span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Step 7</span>
+            <span className={`font-semibold block truncate ${caseItem.status === "RECOVERED" ? "text-emerald-400" : "text-[#8B929E]"}`}>Outcome</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">{caseItem.status}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Flagship Row: AI Decision vs Policy Engine Guardrail */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. AI Decision Card */}
@@ -550,18 +606,30 @@ export default function CaseDetailPage() {
                   AI Recovery Proposal
                 </h3>
                 <p className="text-[11px] text-[#8B929E] font-mono">
-                  Model: {latestDecision?.model_name || "gemini-1.5-flash"}
+                  Model: {latestDecision?.model_name || "Gemini 3.5 Flash"}
                 </p>
               </div>
             </div>
             {latestDecision?.confidence && (
-              <div className="text-right">
-                <span className="text-[10px] uppercase font-mono text-[#8B929E] block">
-                  Confidence
-                </span>
-                <span className="text-sm font-bold font-mono text-[#8B7CFF]">
-                  {Math.round(latestDecision.confidence * 100)}%
-                </span>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-mono text-[#8B929E] block">
+                    AI Confidence
+                  </span>
+                  <span className="text-sm font-bold font-mono text-[#8B7CFF]">
+                    {Math.round(latestDecision.confidence * 100)}%
+                  </span>
+                </div>
+                {latestDecision.recovery_probability !== undefined && (
+                  <div className="text-right pl-3 border-l border-[#23262D]">
+                    <span className="text-[10px] uppercase font-mono text-emerald-400 block">
+                      Recovery Prob
+                    </span>
+                    <span className="text-sm font-bold font-mono text-emerald-400">
+                      {Math.round(latestDecision.recovery_probability * 100)}%
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -576,16 +644,24 @@ export default function CaseDetailPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-[#8B929E]">Proposed Delay</span>
+                  <span className="text-[#8B929E]">Proposed Cooldown Delay</span>
                   <span className="text-[#F5F7FA] font-medium">
                     {latestDecision.delay_minutes} minutes
                   </span>
                 </div>
+                {latestDecision.expected_recovery_value !== undefined && (
+                  <div className="flex items-center justify-between text-xs font-mono pt-1 border-t border-[#191D26]">
+                    <span className="text-[#8B929E]">Expected Net Value (EV)</span>
+                    <span className="text-emerald-400 font-bold">
+                      {formatCurrency(latestDecision.expected_recovery_value)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div>
                 <span className="text-xs font-semibold text-[#F5F7FA] block mb-1">
-                  Diagnosis & Reasoning
+                  Diagnosis & Explanatory Summary
                 </span>
                 <p className="text-xs text-[#C1C7D0] leading-relaxed p-3 rounded-lg bg-[#090C12] border border-[#191D26]">
                   {latestDecision.diagnosis}
@@ -594,7 +670,7 @@ export default function CaseDetailPage() {
 
               {latestDecision.reason && (
                 <div className="text-xs text-[#8B929E] space-y-1">
-                  <span className="font-semibold text-[#F5F7FA]">Why this strategy:</span>
+                  <span className="font-semibold text-[#F5F7FA]">Merchant Explanation:</span>
                   <p className="text-xs text-[#8B929E]">{latestDecision.reason}</p>
                 </div>
               )}

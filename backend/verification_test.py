@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.session import engine, Base, SessionLocal
-from app.models.models import Merchant, Customer, Payment, Subscription, RecoveryCase, AuditLog, AIDecision
+from app.models.models import Merchant, Customer, Payment, Subscription, RecoveryCase, AuditLog, AIDecision, RecoveryDecision, RecoveryAction, MerchantPolicy
 from app.services.policy.engine import evaluate_policy
 from app.schemas.schemas import AIDecisionSchema
 from app.main import process_razorpay_event_logic, inngest_client
@@ -35,11 +35,14 @@ def run_tests():
     try:
         # Clear existing test data to start fresh
         db.query(AuditLog).delete()
+        db.query(RecoveryDecision).delete()
         db.query(AIDecision).delete()
+        db.query(RecoveryAction).delete()
         db.query(RecoveryCase).delete()
         db.query(Payment).delete()
         db.query(Subscription).delete()
         db.query(Customer).delete()
+        db.query(MerchantPolicy).delete()
         db.query(Merchant).delete()
         db.commit()
         

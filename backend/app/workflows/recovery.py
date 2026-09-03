@@ -12,10 +12,12 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.models import RecoveryCase, AIDecision, RecoveryAction, AuditLog, Payment, Subscription, Customer
+from app.models.models import RecoveryCase, AIDecision, RecoveryDecision, RecoveryAction, AuditLog, Payment, Subscription, Customer, MerchantPolicy
 from app.services.ai.agent import get_ai_decision
 from app.services.policy.engine import evaluate_policy
 from app.services.razorpay.client import razorpay_client
+from app.services.context.builder import build_recovery_context
+from app.schemas.schemas import AIDecisionSchema
 
 logger = logging.getLogger("uvicorn")
 
@@ -33,8 +35,9 @@ def get_db_session() -> Session:
 )
 async def payment_recovery_workflow(ctx: inngest.Context) -> str:
     """
-    Main event-driven recovery workflow. Executes contextual analysis,
-    checks policies, runs actions, sleeps, and waits for webhooks durably.
+    Main event-driven recovery workflow.
+    Executes context gathering, AI reasoning, deterministic policy validation,
+    pre-execution safety checks, durable execution, and webhook observation.
     """
     event_data = ctx.event.data
     case_id = event_data.get("case_id")
@@ -43,7 +46,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
     if not case_id:
         raise ValueError("Missing case_id in event payload")
 
-    # Step 1: Gather context and run AI diagnosis
+    # Step 1: Gather sanitized context and run AI diagnosis
     async def run_ai_step() -> dict:
         db = get_db_session()
         try:
@@ -51,34 +54,29 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
             if not case:
                 return {"error": "Case not found"}
             
-            customer = db.query(Customer).filter(Customer.id == case.customer_id).first()
-            payment = db.query(Payment).filter(Payment.id == case.payment_id).first()
-            subscription = db.query(Subscription).filter(Subscription.id == case.subscription_id).first() if case.subscription_id else None
-            
-            # Fetch past history
-            past_success = db.query(Payment).filter(
-                Payment.customer_id == case.customer_id,
-                Payment.status == "captured",
-                Payment.id != case.payment_id
-            ).count()
-            
-            past_failed = db.query(Payment).filter(
-                Payment.customer_id == case.customer_id,
-                Payment.status == "failed",
-                Payment.id != case.payment_id
-            ).count()
+            case.status = "ANALYZING"
+            db.commit()
 
-            context = {
-                "amount": case.amount_at_risk,
-                "retry_count": case.retry_count,
-                "problem_type": case.problem_type,
-                "failure_reason": payment.failure_reason if payment else "UNKNOWN",
-                "subscription_status": subscription.status if subscription else "active",
-                "previous_successful_payments": past_success,
-                "previous_failed_payments": past_failed
-            }
+            # Build sanitized, minimized context (no PII)
+            context = build_recovery_context(case_id=case_id, db=db)
             
-            # Call AI reasoning service (will check Gemini key, fallback if not present)
+            # Log context built
+            audit_ctx = AuditLog(
+                recovery_case_id=case_id,
+                event_type="CONTEXT_BUILT",
+                actor="SYSTEM",
+                payload={
+                    "customer_segment": context.get("customer_segment"),
+                    "failure_category": context.get("failure_category"),
+                    "tenure_days": context.get("customer_tenure_days"),
+                    "lifetime_value": context.get("lifetime_value")
+                }
+            )
+            db.add(audit_ctx)
+
+            # Call AI Decision Engine
+            case.status = "DECIDING"
+            db.commit()
             decision = await get_ai_decision(context)
             
             # Save AI Decision in database
@@ -88,28 +86,37 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 recommended_action=decision.action,
                 delay_minutes=decision.delay_minutes,
                 confidence=decision.confidence,
+                recovery_probability=decision.recovery_probability,
+                expected_recovery_value=decision.expected_recovery_value,
+                actions_evaluated=[a.model_dump() for a in decision.actions],
                 reason=decision.reason,
-                model_name="Gemini 3.5 Flash"
+                model_name="Gemini 3.5 Flash",
+                policy_version=context.get("merchant_policy", {}).get("policy_version", 1)
             )
             db.add(ai_decision_rec)
             
             # Add audit log
             audit = AuditLog(
                 recovery_case_id=case_id,
-                event_type="AI_DIAGNOSIS",
+                event_type="AI_ANALYSIS_COMPLETED",
                 actor="AI",
-                payload=decision.dict()
+                payload={
+                    "diagnosis": decision.diagnosis,
+                    "action": decision.action,
+                    "confidence": decision.confidence,
+                    "recovery_probability": decision.recovery_probability,
+                    "expected_recovery_value": decision.expected_recovery_value,
+                    "reason": decision.reason
+                }
             )
             db.add(audit)
-            
-            # Update status
-            case.status = "ANALYZING"
             db.commit()
             
             return {
-                "ai_decision": decision.dict(),
+                "ai_decision": decision.model_dump(),
                 "subscription_status": context["subscription_status"],
-                "failure_reason": context["failure_reason"]
+                "failure_reason": context["failure_reason"],
+                "merchant_policy": context["merchant_policy"]
             }
         finally:
             db.close()
@@ -120,43 +127,71 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
 
     ai_decision = ai_result["ai_decision"]
     subscription_status = ai_result["subscription_status"]
+    merchant_policy = ai_result.get("merchant_policy", {})
 
-    # Step 2: Policy Engine validation
+    # Step 2: Policy Engine validation ("AI proposes. Policy decides.")
     async def evaluate_policy_step() -> dict:
         db = get_db_session()
         try:
             case = db.query(RecoveryCase).filter(RecoveryCase.id == case_id).first()
-            from app.schemas.schemas import AIDecisionSchema
+            payment = db.query(Payment).filter(Payment.id == case.payment_id).first() if case.payment_id else None
+            payment_status = payment.status if payment else "failed"
+
             proposed = AIDecisionSchema(**ai_decision)
             
+            case.status = "VALIDATING"
+            db.commit()
+
             # Run deterministic policy check
             policy_res = evaluate_policy(
                 amount=case.amount_at_risk,
                 current_retry_count=case.retry_count,
                 subscription_status=subscription_status,
-                proposed_decision=proposed
+                proposed_decision=proposed,
+                payment_status=payment_status,
+                max_retries=merchant_policy.get("max_retries", 2),
+                min_retry_interval_minutes=merchant_policy.get("min_retry_interval_minutes", 30),
+                max_automated_amount=merchant_policy.get("max_autonomous_amount", 25000.0),
+                policy_version=merchant_policy.get("policy_version", 1)
             )
+
+            # Persist unified RecoveryDecision record
+            rec_decision = RecoveryDecision(
+                recovery_case_id=case_id,
+                diagnosis=proposed.diagnosis,
+                ai_action=proposed.action,
+                ai_confidence=proposed.confidence,
+                recovery_probability=proposed.recovery_probability,
+                expected_recovery_value=proposed.expected_recovery_value or 0.0,
+                actions_evaluated=[a.model_dump() for a in proposed.actions],
+                policy_decision=policy_res.decision,
+                policy_rule=policy_res.rule_triggered,
+                policy_reason=policy_res.reason,
+                final_action=policy_res.overridden_action or proposed.action,
+                delay_minutes=policy_res.overridden_delay_minutes if policy_res.overridden_delay_minutes is not None else proposed.delay_minutes,
+                policy_version=policy_res.policy_version
+            )
+            db.add(rec_decision)
             
             # Write policy check to audit logs
             audit = AuditLog(
                 recovery_case_id=case_id,
-                event_type="POLICY_CHECK",
+                event_type="POLICY_EVALUATED",
                 actor="POLICY_ENGINE",
-                payload=policy_res.dict()
+                payload=policy_res.model_dump()
             )
             db.add(audit)
             db.commit()
-            return policy_res.dict()
+            return policy_res.model_dump()
         finally:
             db.close()
 
     policy_result = await ctx.step.run("policy-evaluation", evaluate_policy_step)
 
-    # Determine action and delay (using policy override if applicable)
     action = policy_result.get("overridden_action") or ai_decision["action"]
     delay_minutes = policy_result.get("overridden_delay_minutes") if policy_result.get("overridden_delay_minutes") is not None else ai_decision["delay_minutes"]
 
-    # Step 3: Handle the authorized action
+    # Step 3: Execute authorized action
     if action == "STOP":
         async def stop_case() -> str:
             db = get_db_session()
@@ -165,9 +200,9 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 case.status = "STOPPED"
                 audit = AuditLog(
                     recovery_case_id=case_id,
-                    event_type="STATUS_CHANGED",
-                    actor="SYSTEM",
-                    payload={"new_status": "STOPPED", "reason": "Policy engine triggered STOP."}
+                    event_type="RECOVERY_STOPPED",
+                    actor="POLICY_ENGINE",
+                    payload={"new_status": "STOPPED", "reason": policy_result.get("reason", "Policy engine triggered STOP.")}
                 )
                 db.add(audit)
                 db.commit()
@@ -184,9 +219,9 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 case.status = "ESCALATED"
                 audit = AuditLog(
                     recovery_case_id=case_id,
-                    event_type="STATUS_CHANGED",
-                    actor="SYSTEM",
-                    payload={"new_status": "ESCALATED", "reason": policy_result["reason"]}
+                    event_type="HUMAN_ESCALATED",
+                    actor="POLICY_ENGINE",
+                    payload={"new_status": "ESCALATED", "reason": policy_result.get("reason")}
                 )
                 db.add(audit)
                 db.commit()
@@ -195,49 +230,61 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 db.close()
         return await ctx.step.run("escalate-recovery", escalate_case)
 
-    elif action == "RETRY_PAYMENT":
-        # Check if we need to sleep (delay_minutes > 0)
+    elif action in ["RETRY_LATER", "RETRY_PAYMENT", "RETRY_NOW"]:
         if delay_minutes > 0:
-            async def set_waiting() -> str:
+            async def schedule_delay() -> str:
                 db = get_db_session()
                 try:
                     case = db.query(RecoveryCase).filter(RecoveryCase.id == case_id).first()
-                    case.status = "WAITING"
+                    case.status = "SCHEDULED"
                     audit = AuditLog(
                         recovery_case_id=case_id,
-                        event_type="STATUS_CHANGED",
+                        event_type="ACTION_SCHEDULED",
                         actor="SYSTEM",
-                        payload={"new_status": "WAITING", "delay_minutes": delay_minutes}
+                        payload={"action": "RETRY_LATER", "delay_minutes": delay_minutes}
                     )
                     db.add(audit)
                     db.commit()
-                    return "WAITING"
+                    return "SCHEDULED"
                 finally:
                     db.close()
-            await ctx.step.run("transition-to-waiting", set_waiting)
+            await ctx.step.run("transition-to-scheduled", schedule_delay)
             
-            # Wait durably
+            # Durable sleep
             await ctx.step.sleep("retry-delay", f"{delay_minutes}m")
 
-        # Execute retry
+        # Pre-Execution Safety Check & Razorpay Execution
         async def execute_retry() -> dict:
             db = get_db_session()
             try:
                 case = db.query(RecoveryCase).filter(RecoveryCase.id == case_id).first()
+                payment = db.query(Payment).filter(Payment.id == case.payment_id).first() if case.payment_id else None
+
+                # Pre-execution check: Never execute if payment was captured during sleep
+                if payment and payment.status == "captured":
+                    case.status = "RECOVERED"
+                    case.recovered_amount = case.amount_at_risk
+                    db.commit()
+                    return {"success": True, "aborted": True, "message": "Payment already captured during cooldown window."}
+
                 case.retry_count += 1
                 case.status = "ACTION_PENDING"
                 
-                # Call Razorpay trigger retry
+                # Execute Razorpay charge retry
                 res = razorpay_client.trigger_retry(case.payment_id, case.amount_at_risk)
                 
-                # Save Action
+                # Save Attempt
                 act = RecoveryAction(
                     recovery_case_id=case_id,
                     action_type="RETRY_PAYMENT",
                     attempt_number=case.retry_count,
-                    status="EXECUTED" if res["success"] else "FAILURE",
+                    status="EXECUTED" if res.get("success") else "FAILURE",
                     external_reference=res.get("reference"),
-                    result_summary=res.get("message")
+                    result_summary=res.get("message"),
+                    amount_attempted=case.amount_at_risk,
+                    amount_recovered=case.amount_at_risk if res.get("success") else 0.0,
+                    customer_friction="LOW",
+                    estimated_cost=5.0
                 )
                 db.add(act)
                 
@@ -254,12 +301,10 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 db.close()
 
         retry_res = await ctx.step.run("execute-payment-retry", execute_retry)
-        
-        # In mock or test mode, the simulated payment retry is successful immediately.
-        # But in a production setup, we pause and wait for the "razorpay/payment.captured" event.
-        # Let's write the wait logic to verify syntax and ensure event-driven flow.
-        
-        # Wait for the webhook update
+        if retry_res.get("aborted"):
+            return "RECOVERED"
+
+        # Wait for Razorpay capture webhook
         webhook_event = await ctx.step.wait_for_event(
             "wait-for-charge-webhook",
             event="razorpay/payment.captured",
@@ -274,17 +319,16 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 if webhook_event:
                     case.status = "RECOVERED"
                     case.recovered_amount = case.amount_at_risk
-                    event_type = "RECOVERED"
+                    audit_type = "PAYMENT_RECOVERED"
                 else:
-                    # Timeout reached or failure simulated
                     case.status = "FAILED"
-                    event_type = "FAILED"
+                    audit_type = "RECOVERY_FAILED"
                 
                 audit = AuditLog(
                     recovery_case_id=case_id,
-                    event_type="STATUS_CHANGED",
-                    actor="SYSTEM",
-                    payload={"new_status": case.status, "reason": "Observed webhook outcome of payment charge."}
+                    event_type=audit_type,
+                    actor="RAZORPAY_WEBHOOK" if webhook_event else "SYSTEM",
+                    payload={"new_status": case.status, "recovered_amount": case.recovered_amount}
                 )
                 db.add(audit)
                 db.commit()
@@ -294,7 +338,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 
         return await ctx.step.run("finalize-retry-case", process_webhook_result)
 
-    elif action == "REQUEST_PAYMENT_UPDATE":
+    elif action in ["REQUEST_PAYMENT_UPDATE", "PAYMENT_UPDATE"]:
         async def execute_link_creation() -> dict:
             db = get_db_session()
             try:
@@ -302,22 +346,27 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 customer = db.query(Customer).filter(Customer.id == case.customer_id).first()
                 case.status = "WAITING"
                 
-                # Call Razorpay create payment link
+                cust_name = customer.name if customer else "Valued Customer"
+                cust_email = customer.email if customer else "customer@example.com"
+
                 res = razorpay_client.create_payment_update_link(
-                    customer_name=customer.name,
-                    customer_email=customer.email,
+                    customer_name=cust_name,
+                    customer_email=cust_email,
                     amount=case.amount_at_risk,
                     case_id=case_id
                 )
                 
-                # Save Action
                 act = RecoveryAction(
                     recovery_case_id=case_id,
                     action_type="REQUEST_PAYMENT_UPDATE",
                     attempt_number=1,
-                    status="EXECUTED" if res["success"] else "FAILURE",
+                    status="EXECUTED" if res.get("success") else "FAILURE",
                     external_reference=res.get("payment_link_id"),
-                    result_summary=f"Link created: {res.get('short_url')}"
+                    result_summary=f"Link created: {res.get('short_url')}",
+                    amount_attempted=case.amount_at_risk,
+                    amount_recovered=0.0,
+                    customer_friction="MEDIUM",
+                    estimated_cost=15.0
                 )
                 db.add(act)
                 
@@ -336,8 +385,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
         link_res = await ctx.step.run("create-payment-update-link", execute_link_creation)
         payment_link_id = link_res.get("payment_link_id")
 
-        # Wait for the customer to complete payment via the update link.
-        # Listen for the captured payment webhook matching this payment link.
+        # Wait for customer to complete payment
         payment_event = await ctx.step.wait_for_event(
             "wait-for-customer-payment",
             event="razorpay/payment.captured",
@@ -352,14 +400,16 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 if payment_event:
                     case.status = "RECOVERED"
                     case.recovered_amount = case.amount_at_risk
+                    event_type = "PAYMENT_RECOVERED"
                 else:
                     case.status = "FAILED"
+                    event_type = "RECOVERY_FAILED"
                 
                 audit = AuditLog(
                     recovery_case_id=case_id,
-                    event_type="STATUS_CHANGED",
-                    actor="SYSTEM",
-                    payload={"new_status": case.status, "reason": "Customer payment link action completed or expired."}
+                    event_type=event_type,
+                    actor="RAZORPAY_WEBHOOK" if payment_event else "SYSTEM",
+                    payload={"new_status": case.status, "recovered_amount": case.recovered_amount}
                 )
                 db.add(audit)
                 db.commit()

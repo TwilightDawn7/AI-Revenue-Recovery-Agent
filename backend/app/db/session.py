@@ -1,9 +1,13 @@
+import os
 import logging
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
+
+DB_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SQLITE_PATH = os.path.join(DB_DIR, "recovery_app.db")
 
 database_url = settings.DATABASE_URL
 try:
@@ -20,7 +24,7 @@ try:
         engine = create_engine(database_url, connect_args={"check_same_thread": False})
 except Exception as e:
     logger.warning(f"Database connection to PostgreSQL failed: {e}. Falling back to local SQLite database.")
-    engine = create_engine("sqlite:///./recovery_app.db", connect_args={"check_same_thread": False})
+    engine = create_engine(f"sqlite:///{SQLITE_PATH}", connect_args={"check_same_thread": False})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
