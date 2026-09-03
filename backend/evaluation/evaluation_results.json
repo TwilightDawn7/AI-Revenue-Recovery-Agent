@@ -1,0 +1,154 @@
+{
+  "benchmark_1000_cases": [
+    {
+      "strategy": "Baseline 1: Always Retry",
+      "total_cases": 1000,
+      "revenue_at_risk": 12953578.15,
+      "recovered_revenue": 926319.37,
+      "recovery_rate": 7.15,
+      "recovered_cases": 160,
+      "escalated_cases": 0,
+      "stopped_cases": 0,
+      "attempts_sent": 1000,
+      "policy_violations": 140,
+      "wasted_retries": 235
+    },
+    {
+      "strategy": "Baseline 2: Failure-Code Rules",
+      "total_cases": 1000,
+      "revenue_at_risk": 12953578.15,
+      "recovered_revenue": 4264868.4,
+      "recovery_rate": 32.92,
+      "recovered_cases": 286,
+      "escalated_cases": 0,
+      "stopped_cases": 140,
+      "attempts_sent": 668,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    },
+    {
+      "strategy": "Baseline 3: Rule-Based Engine",
+      "total_cases": 1000,
+      "revenue_at_risk": 12953578.15,
+      "recovered_revenue": 6760851.1,
+      "recovery_rate": 52.19,
+      "recovered_cases": 422,
+      "escalated_cases": 128,
+      "stopped_cases": 140,
+      "attempts_sent": 622,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    },
+    {
+      "strategy": "Baseline 4: AI Recovery Agent",
+      "total_cases": 1000,
+      "revenue_at_risk": 12953578.15,
+      "recovered_revenue": 7998002.11,
+      "recovery_rate": 61.74,
+      "recovered_cases": 487,
+      "escalated_cases": 94,
+      "stopped_cases": 140,
+      "attempts_sent": 588,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    }
+  ],
+  "ablation_study": [
+    {
+      "configuration": "Rule-Based Deterministic Engine",
+      "strategy": "Baseline 3: Rule-Based Engine",
+      "total_cases": 1000,
+      "revenue_at_risk": 12953578.15,
+      "recovered_revenue": 6760851.1,
+      "recovery_rate": 52.19,
+      "recovered_cases": 422,
+      "escalated_cases": 128,
+      "stopped_cases": 140,
+      "attempts_sent": 622,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    },
+    {
+      "configuration": "AI Agent without Customer Context",
+      "strategy": "AI without Context",
+      "total_cases": 1000,
+      "revenue_at_risk": 12953578.15,
+      "recovered_revenue": 6901733.34,
+      "recovery_rate": 53.28,
+      "recovered_cases": 430,
+      "escalated_cases": 116,
+      "stopped_cases": 140,
+      "attempts_sent": 602,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    },
+    {
+      "configuration": "AI Agent with Full Customer Context",
+      "strategy": "Baseline 4: AI Recovery Agent",
+      "total_cases": 1000,
+      "revenue_at_risk": 12953578.15,
+      "recovered_revenue": 7998002.11,
+      "recovery_rate": 61.74,
+      "recovered_cases": 487,
+      "escalated_cases": 94,
+      "stopped_cases": 140,
+      "attempts_sent": 588,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    }
+  ],
+  "benchmark_100_cases_dev": [
+    {
+      "strategy": "Baseline 1: Always Retry (100)",
+      "total_cases": 100,
+      "revenue_at_risk": 753564.42,
+      "recovered_revenue": 69977.0,
+      "recovery_rate": 9.29,
+      "recovered_cases": 23,
+      "escalated_cases": 0,
+      "stopped_cases": 0,
+      "attempts_sent": 100,
+      "policy_violations": 13,
+      "wasted_retries": 19
+    },
+    {
+      "strategy": "Baseline 2: Failure-Code Rules (100)",
+      "total_cases": 100,
+      "revenue_at_risk": 753564.42,
+      "recovered_revenue": 239780.5,
+      "recovery_rate": 31.82,
+      "recovered_cases": 34,
+      "escalated_cases": 0,
+      "stopped_cases": 13,
+      "attempts_sent": 70,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    },
+    {
+      "strategy": "Baseline 3: Rule-Based Engine (100)",
+      "total_cases": 100,
+      "revenue_at_risk": 753564.42,
+      "recovered_revenue": 381190.57,
+      "recovery_rate": 50.59,
+      "recovered_cases": 51,
+      "escalated_cases": 7,
+      "stopped_cases": 13,
+      "attempts_sent": 77,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    },
+    {
+      "strategy": "Baseline 4: AI Recovery Agent (100)",
+      "total_cases": 100,
+      "revenue_at_risk": 753564.42,
+      "recovered_revenue": 483699.99,
+      "recovery_rate": 64.19,
+      "recovered_cases": 59,
+      "escalated_cases": 4,
+      "stopped_cases": 13,
+      "attempts_sent": 73,
+      "policy_violations": 0,
+      "wasted_retries": 0
+    }
+  ]
+}

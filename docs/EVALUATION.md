@@ -1,8 +1,12 @@
-# AI Revenue Recovery Agent — Evaluation 2.0 Report
+# Empirical Evaluation 2.0 & Benchmark Methodology
 
-**Benchmark Dataset:** 1,000 Executed Scenarios (Fixed Seed `42`, No Extrapolation)
+To evaluate the financial and operational efficacy of the Autonomous AI Revenue Recovery Agent, we execute a multi-baseline empirical benchmark across **1,000 distinct synthetic scenarios** generated with deterministic seed `42`.
 
-## 1. Multi-Baseline Comparison (1,000 Scenarios)
+**Integrity Mandate:** Zero metric extrapolation. Every reported number reflects concrete simulated executions.
+
+---
+
+## 1. Multi-Baseline Comparison (1,000 Executed Scenarios)
 
 | Strategy | Revenue At Risk | Recovered Revenue | Recovery Rate (%) | Recovered Cases | Attempts Sent | Wasted Retries | Policy Violations |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -23,9 +27,9 @@
 
 ---
 
-## 3. Fast Development Benchmark (100 Scenarios)
+## 3. Running the Benchmark Locally
 
-| Strategy | Revenue At Risk | Recovered Revenue | Recovery Rate (%) | Recovered Cases | Attempts Sent |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Baseline 1 (Always Retry)** | ₹753,564.42 | ₹69,977.00 | 9.29% | 23 | 100 |
-| **Baseline 4 (AI Recovery Agent)** | ₹753,564.42 | ₹483,699.99 | 64.19% | 59 | 73 |
+```bash
+# Execute 1,000-scenario benchmark and generate markdown report
+backend/.venv/Scripts/python.exe backend/evaluation/run_evaluation.py
+```

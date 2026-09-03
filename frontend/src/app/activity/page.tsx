@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useMounted } from "@/hooks/use-mounted";
 import { useCases } from "@/hooks/use-cases";
 import { formatCurrency, formatDate, formatRelativeTime } from "@/lib/formatters";
 import {
@@ -16,7 +17,9 @@ import {
 } from "lucide-react";
 
 export default function ActivityPage() {
+  const mounted = useMounted();
   const { data: cases, isLoading } = useCases();
+  const showLoading = !mounted || isLoading;
   const [filterType, setFilterType] = useState<string>("ALL");
 
   const events = React.useMemo(() => {
@@ -156,7 +159,7 @@ export default function ActivityPage() {
 
       {/* Event Stream List */}
       <div className="rounded-xl bg-[#0D1017] border border-[#23262D] p-5">
-        {isLoading ? (
+        {showLoading ? (
           <div className="space-y-3">
             {[1, 2, 3, 4, 5].map((i) => (
               <div
@@ -214,7 +217,10 @@ export default function ActivityPage() {
                     <span className="text-xs font-mono font-bold text-[#F5F7FA] block">
                       {formatCurrency(evt.amount)}
                     </span>
-                    <span className="text-[10px] font-mono text-[#8B929E] block">
+                    <span
+                      className="text-[10px] font-mono text-[#8B929E] block"
+                      suppressHydrationWarning
+                    >
                       {formatRelativeTime(evt.time)}
                     </span>
                   </div>

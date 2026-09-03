@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import Link from "next/link";
+import { useMounted } from "@/hooks/use-mounted";
 import { useCases } from "@/hooks/use-cases";
 import { CaseStatus, RecoveryCase } from "@/types";
 import {
@@ -30,7 +31,9 @@ export default function CasesPage() {
   const [sortBy, setSortBy] = useState<"date" | "amount" | "retries">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
+  const mounted = useMounted();
   const { data: cases, isLoading } = useCases();
+  const showLoading = !mounted || isLoading;
 
   const filteredCases = useMemo(() => {
     if (!cases) return [];
@@ -153,7 +156,7 @@ export default function CasesPage() {
 
       {/* Operations Table */}
       <div className="rounded-xl bg-[#0D1017] border border-[#23262D] overflow-hidden">
-        {isLoading ? (
+        {showLoading ? (
           <div className="p-6 space-y-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <div
@@ -176,8 +179,8 @@ export default function CasesPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-[#23262D] bg-[#090C12] text-[11px] font-mono text-[#8B929E] uppercase tracking-wider">
-                  <th className="py-3 px-4">Case</th>
+                <tr className="border-b border-[#23262D] text-[11px] font-mono text-[#8B929E] uppercase">
+                  <th className="py-3 px-4">Case ID</th>
                   <th className="py-3 px-4">Customer</th>
                   <th
                     className="py-3 px-4 text-right cursor-pointer select-none hover:text-[#F5F7FA]"
@@ -189,13 +192,13 @@ export default function CasesPage() {
                     </div>
                   </th>
                   <th className="py-3 px-4">Problem Type</th>
-                  <th className="py-3 px-4">AI Recommendation</th>
+                  <th className="py-3 px-4">AI Recommended Strategy</th>
                   <th
                     className="py-3 px-4 text-center cursor-pointer select-none hover:text-[#F5F7FA]"
                     onClick={() => toggleSort("retries")}
                   >
                     <div className="flex items-center justify-center gap-1">
-                      <span>Retries</span>
+                      <span>Attempts</span>
                       <ArrowUpDown className="w-3 h-3" />
                     </div>
                   </th>
@@ -286,7 +289,10 @@ export default function CasesPage() {
                           {statusStyle.label}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono text-[11px] text-[#8B929E]">
+                      <td
+                        className="py-3.5 px-4 text-right font-mono text-[11px] text-[#8B929E]"
+                        suppressHydrationWarning
+                      >
                         {formatRelativeTime(c.created_at)}
                       </td>
                       <td className="py-3.5 px-4 text-right">

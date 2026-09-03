@@ -278,15 +278,36 @@ export default function SimulatorPage() {
           </p>
         </div>
 
-        {/* 1-Click Full Demo Button */}
-        <button
-          onClick={handleRunFullDemo}
-          disabled={isRunningDemo}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-[#8B7CFF] to-[#6366F1] hover:from-[#7966FF] hover:to-[#5558E6] shadow-md shadow-[#8B7CFF]/25 transition-all cursor-pointer shrink-0 disabled:opacity-50"
-        >
-          <Zap className={`w-4 h-4 fill-current ${isRunningDemo ? "animate-spin" : ""}`} />
-          <span>{isRunningDemo ? "Executing Demo Run..." : "▶ Run 4-Scenario Full Demo"}</span>
-        </button>
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetch("http://localhost:8000/api/demo/seed", { method: "POST" });
+                if (res.ok) {
+                  const json = await res.json();
+                  setLastResponse(json);
+                  await queryClient.invalidateQueries();
+                }
+              } catch (e: any) {
+                setLastResponse({ error: e.message || "Failed to seed demo data" });
+              }
+            }}
+            className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-semibold text-[#F5F7FA] bg-[#121722] hover:bg-[#161C2A] border border-[#23262D] hover:border-emerald-500/50 transition-all cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Seed Curated Dataset (10 Cases)</span>
+          </button>
+
+          <button
+            onClick={handleRunFullDemo}
+            disabled={isRunningDemo}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-[#8B7CFF] to-[#6366F1] hover:from-[#7966FF] hover:to-[#5558E6] shadow-md shadow-[#8B7CFF]/25 transition-all cursor-pointer disabled:opacity-50"
+          >
+            <Zap className={`w-4 h-4 fill-current ${isRunningDemo ? "animate-spin" : ""}`} />
+            <span>{isRunningDemo ? "Executing Demo Run..." : "▶ Run 4-Scenario Full Demo"}</span>
+          </button>
+        </div>
       </div>
 
       {/* Demo Progress Box */}

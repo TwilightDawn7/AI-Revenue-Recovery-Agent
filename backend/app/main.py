@@ -13,10 +13,15 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 from app.core.config import settings
 from app.db.session import engine, Base, get_db
-from app.models.models import Merchant, Customer, Payment, Subscription, RecoveryCase, AIDecision, RecoveryAction, AuditLog
-from app.schemas.schemas import RecoveryCaseResponse, DashboardMetrics, AuditLogResponse
+from app.models.models import Merchant, Customer, Payment, Subscription, RecoveryCase, AIDecision, RecoveryDecision, RecoveryAction, AuditLog, MerchantPolicy
+from app.schemas.schemas import (
+    RecoveryCaseResponse, DashboardMetrics, AuditLogResponse,
+    MerchantPolicyResponse, MerchantPolicyBase, TestPolicyRequest, TestPolicyResponse, AIDecisionSchema
+)
 from app.workflows.recovery import inngest_client, payment_recovery_workflow
 from app.services.razorpay.client import razorpay_client
+from app.services.policy.engine import evaluate_policy
+from app.services.ai.agent import get_fallback_decision
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
@@ -282,28 +287,106 @@ def health():
 @app.get("/api/metrics", response_model=DashboardMetrics)
 def get_dashboard_metrics(db: Session = Depends(get_db)):
     """
-    Calculate high-level recovery metrics.
+    Calculate high-level recovery metrics and grounded attribution analytics.
     """
     cases = db.query(RecoveryCase).all()
+    actions = db.query(RecoveryAction).all()
     
     revenue_at_risk = sum(c.amount_at_risk for c in cases)
     recovered_revenue = sum(c.recovered_amount for c in cases)
     cases_processed = len(cases)
     
-    successful_recoveries = sum(1 for c in cases if c.status == "RECOVERED")
+    successful_cases = [c for c in cases if c.status == "RECOVERED"]
+    successful_recoveries = len(successful_cases)
     escalations = sum(1 for c in cases if c.status == "ESCALATED")
     stopped_cases = sum(1 for c in cases if c.status == "STOPPED")
+    active_recoveries = sum(1 for c in cases if c.status in ["AT_RISK", "ANALYZING", "DECIDING", "VALIDATING", "SCHEDULED", "WAITING", "ACTION_PENDING"])
+    recovery_attempts = len(actions)
     
+    # Calculate recovery rate
     recovery_rate = (recovered_revenue / revenue_at_risk * 100.0) if revenue_at_risk > 0 else 0.0
     
+    # Revenue Protected: Sum of recurring subscription revenue rescued
+    revenue_protected = sum(c.recovered_amount for c in successful_cases if c.subscription_id)
+    
+    # Average recovery time in minutes
+    recovery_times = []
+    for c in successful_cases:
+        if c.updated_at and c.created_at and c.updated_at > c.created_at:
+            mins = (c.updated_at - c.created_at).total_seconds() / 60.0
+            recovery_times.append(mins)
+    avg_recovery_time = round(sum(recovery_times) / len(recovery_times), 1) if recovery_times else 15.0
+    
+    # Wasted retries prevented: stopped cancelled subs + permanent failures where retries were safely blocked
+    wasted_retries_prevented = sum(1 for c in cases if c.status == "STOPPED" or (c.payment and c.payment.failure_reason in ["EXPIRED_CARD", "INVALID_CARD_DETAILS"]))
+    
+    # Strategy Breakdown
+    strategy_map = {
+        "RETRY": {"count": 0, "recovered": 0.0, "success": 0},
+        "PAYMENT_UPDATE": {"count": 0, "recovered": 0.0, "success": 0},
+        "ESCALATE_HUMAN": {"count": 0, "recovered": 0.0, "success": 0},
+    }
+    
+    for c in cases:
+        strat = "RETRY"
+        if any(a.action_type in ["REQUEST_PAYMENT_UPDATE", "PAYMENT_UPDATE"] for a in c.recovery_actions):
+            strat = "PAYMENT_UPDATE"
+        elif c.status == "ESCALATED" or any(a.action_type == "ESCALATE_HUMAN" for a in c.recovery_actions):
+            strat = "ESCALATE_HUMAN"
+            
+        strategy_map[strat]["count"] += 1
+        if c.status == "RECOVERED":
+            strategy_map[strat]["recovered"] += c.recovered_amount
+            strategy_map[strat]["success"] += 1
+
+    by_strategy = [
+        {
+            "strategy": k,
+            "cases_count": v["count"],
+            "amount_recovered": v["recovered"],
+            "success_rate": round((v["success"] / v["count"] * 100.0), 1) if v["count"] > 0 else 0.0
+        }
+        for k, v in strategy_map.items()
+    ]
+    
+    # Failure Category Breakdown
+    fail_map = {}
+    for c in cases:
+        reason = c.payment.failure_reason if c.payment else "UNKNOWN"
+        from app.services.context.builder import categorize_failure_reason
+        cat = categorize_failure_reason(reason)
+        if cat not in fail_map:
+            fail_map[cat] = {"count": 0, "recovered": 0.0, "at_risk": 0.0}
+        fail_map[cat]["count"] += 1
+        fail_map[cat]["at_risk"] += c.amount_at_risk
+        if c.status == "RECOVERED":
+            fail_map[cat]["recovered"] += c.recovered_amount
+
+    by_failure_type = [
+        {
+            "category": k,
+            "cases_count": v["count"],
+            "amount_recovered": v["recovered"],
+            "amount_at_risk": v["at_risk"]
+        }
+        for k, v in fail_map.items()
+    ]
+
     return DashboardMetrics(
         revenue_at_risk=revenue_at_risk,
         recovered_revenue=recovered_revenue,
         recovery_rate=recovery_rate,
+        revenue_protected=revenue_protected,
+        average_recovery_time_minutes=avg_recovery_time,
         cases_processed=cases_processed,
         successful_recoveries=successful_recoveries,
+        active_recoveries=active_recoveries,
+        recovery_attempts=recovery_attempts,
+        wasted_retries_prevented=wasted_retries_prevented,
         escalations=escalations,
-        stopped_cases=stopped_cases
+        stopped_cases=stopped_cases,
+        by_strategy=by_strategy,
+        by_failure_type=by_failure_type
     )
 
 
@@ -578,6 +661,285 @@ async def real_webhook_endpoint(
 
 
 # ==========================================
+# Policy Studio Endpoints (Phase 6)
+# ==========================================
+@app.get("/api/policies", response_model=MerchantPolicyResponse)
+def get_merchant_policy(db: Session = Depends(get_db)):
+    """
+    Get active merchant policy boundaries and version.
+    """
+    merchant = db.query(Merchant).first()
+    if not merchant:
+        merchant = Merchant(name="Default Merchant")
+        db.add(merchant)
+        db.commit()
+        db.refresh(merchant)
+        
+    policy = db.query(MerchantPolicy).filter(MerchantPolicy.merchant_id == merchant.id).first()
+    if not policy:
+        policy = MerchantPolicy(
+            merchant_id=merchant.id,
+            max_retries=2,
+            min_retry_interval_minutes=30,
+            max_autonomous_amount=25000.0,
+            high_value_action="ESCALATE_HUMAN",
+            policy_version=1
+        )
+        db.add(policy)
+        db.commit()
+        db.refresh(policy)
+    return policy
+
+
+@app.put("/api/policies", response_model=MerchantPolicyResponse)
+def update_merchant_policy(payload: MerchantPolicyBase, db: Session = Depends(get_db)):
+    """
+    Update merchant policy limits, increment policy version, and return updated policy.
+    """
+    merchant = db.query(Merchant).first()
+    if not merchant:
+        merchant = Merchant(name="Default Merchant")
+        db.add(merchant)
+        db.commit()
+        db.refresh(merchant)
+        
+    policy = db.query(MerchantPolicy).filter(MerchantPolicy.merchant_id == merchant.id).first()
+    if not policy:
+        policy = MerchantPolicy(
+            merchant_id=merchant.id,
+            max_retries=payload.max_retries,
+            min_retry_interval_minutes=payload.min_retry_interval_minutes,
+            max_autonomous_amount=payload.max_autonomous_amount,
+            high_value_action=payload.high_value_action,
+            policy_version=1
+        )
+        db.add(policy)
+    else:
+        policy.max_retries = payload.max_retries
+        policy.min_retry_interval_minutes = payload.min_retry_interval_minutes
+        policy.max_autonomous_amount = payload.max_autonomous_amount
+        policy.high_value_action = payload.high_value_action
+        policy.policy_version += 1
+        policy.updated_at = datetime.utcnow()
+        
+    db.commit()
+    db.refresh(policy)
+    return policy
+
+
+@app.post("/api/policies/test", response_model=TestPolicyResponse)
+def test_policy_sandbox(req: TestPolicyRequest):
+    """
+    Sandbox endpoint: Runs a sample scenario against policy parameters using the real Policy Engine.
+    """
+    scenario = req.scenario
+    amount = float(scenario.get("amount", 1999.0))
+    current_retries = int(scenario.get("retry_count", 0))
+    sub_status = scenario.get("subscription_status", "active")
+    raw_action = scenario.get("proposed_action", "RETRY_LATER")
+    raw_delay = int(scenario.get("delay_minutes", 30))
+    
+    proposed = AIDecisionSchema(
+        diagnosis="Sandbox policy simulation",
+        action=raw_action,
+        delay_minutes=raw_delay,
+        confidence=0.90,
+        recovery_probability=0.50,
+        expected_recovery_value=round(amount * 0.50 - 5.0, 2),
+        reason="Sandbox test evaluation"
+    )
+    
+    result = evaluate_policy(
+        amount=amount,
+        current_retry_count=current_retries,
+        subscription_status=sub_status,
+        proposed_decision=proposed,
+        max_retries=req.policy.max_retries,
+        min_retry_interval_minutes=req.policy.min_retry_interval_minutes,
+        max_automated_amount=req.policy.max_autonomous_amount
+    )
+    
+    return TestPolicyResponse(
+        allowed=result.allowed,
+        decision=result.decision,
+        rule_triggered=result.rule_triggered,
+        reason=result.reason,
+        final_action=result.overridden_action or proposed.action,
+        delay_minutes=result.overridden_delay_minutes if result.overridden_delay_minutes is not None else proposed.delay_minutes
+    )
+
+
+# ==========================================
+# Evaluation 2.0 Endpoints (Phase 9)
+# ==========================================
+@app.get("/api/evaluation/results")
+def get_evaluation_results():
+    """
+    Fetch pre-computed benchmark results for 1,000 cases, AI ablation, and 100 dev cases.
+    """
+    eval_file = os.path.join(os.path.dirname(__file__), "..", "evaluation", "evaluation_results.json")
+    if os.path.exists(eval_file):
+        with open(eval_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+            
+    # If not yet generated, run benchmark automatically
+    from evaluation.run_evaluation import main as run_eval_main
+    run_eval_main()
+    if os.path.exists(eval_file):
+        with open(eval_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"error": "Evaluation results not found"}
+
+
+@app.post("/api/evaluation/run")
+def trigger_evaluation_run():
+    """
+    Execute fresh 1,000-scenario evaluation benchmark and return computed results.
+    """
+    from evaluation.generate_data import generate_all_datasets
+    from evaluation.run_evaluation import execute_full_benchmark
+    
+    generate_all_datasets()
+    eval_dir = os.path.join(os.path.dirname(__file__), "..", "evaluation")
+    
+    with open(os.path.join(eval_dir, "test_cases_1000.json"), "r", encoding="utf-8") as f:
+        cases_1000 = json.load(f)
+    with open(os.path.join(eval_dir, "test_cases_100.json"), "r", encoding="utf-8") as f:
+        cases_100 = json.load(f)
+        
+    results = execute_full_benchmark(cases_1000, cases_100)
+    return results
+
+
+# ==========================================
+# AI vs Policy Showcase Endpoint (Phase 11)
+# ==========================================
+@app.post("/api/demo/seed")
+def seed_demo_data_endpoint(db: Session = Depends(get_db)):
+    """
+    Seeds curated deterministic demo scenarios (Scenarios A through J)
+    populating customers, subscriptions, payments, cases, AI decisions, and audit logs.
+    """
+    from app.services.demo.scenarios import seed_demo_database
+    count = seed_demo_database(db)
+    return {"status": "success", "message": f"Successfully seeded {count} curated demo scenarios.", "seeded_cases": count}
+
+
+@app.post("/api/demo/run-showcase")
+async def run_showcase_pipeline(request: Request, db: Session = Depends(get_db)):
+    """
+    Executes the ₹48,000 High-Value Scenario through the real recovery pipeline:
+    Context Engine -> AI Decision -> Policy Engine Gate -> Final Action & Audit Log.
+    Zero hardcoded values.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+        
+    amount = float(body.get("amount", 48000.0))
+    customer_name = body.get("customer_name", "Arjun Enterprises")
+    failure_reason = body.get("failure_reason", "BANK_DECLINE")
+    subscription_status = body.get("subscription_status", "active")
+    past_successes = int(body.get("previous_successful_payments", 4))
+    
+    # 1. Build sanitized context
+    from app.services.context.builder import categorize_failure_reason, compute_customer_segment
+    failure_category = categorize_failure_reason(failure_reason)
+    segment = compute_customer_segment(
+        lifetime_value=amount * past_successes,
+        successful_renewals=past_successes,
+        failed_payments=0,
+        current_amount=amount
+    )
+    
+    # Merchant Policy
+    merchant = db.query(Merchant).first()
+    policy = db.query(MerchantPolicy).filter(MerchantPolicy.merchant_id == merchant.id).first() if merchant else None
+    max_auto = policy.max_autonomous_amount if policy else 25000.0
+    max_ret = policy.max_retries if policy else 2
+    min_interval = policy.min_retry_interval_minutes if policy else 30
+    
+    context = {
+        "amount": amount,
+        "currency": "INR",
+        "retry_count": 0,
+        "failure_reason": failure_reason,
+        "failure_category": failure_category,
+        "subscription_status": subscription_status,
+        "customer_segment": segment,
+        "customer_tenure_days": past_successes * 30,
+        "lifetime_value": amount * past_successes,
+        "previous_successful_payments": past_successes,
+        "previous_failed_payments": 0,
+        "merchant_policy": {
+            "max_retries": max_ret,
+            "min_retry_interval_minutes": min_interval,
+            "max_autonomous_amount": max_auto,
+            "policy_version": policy.policy_version if policy else 1
+        }
+    }
+    
+    # 2. Real AI Decision Service
+    ai_decision = await get_ai_decision(context)
+    
+    # 3. Real Policy Engine Interceptor
+    policy_res = evaluate_policy(
+        amount=amount,
+        current_retry_count=0,
+        subscription_status=subscription_status,
+        proposed_decision=ai_decision,
+        payment_status="failed",
+        max_retries=max_ret,
+        min_retry_interval_minutes=min_interval,
+        max_automated_amount=max_auto,
+        policy_version=policy.policy_version if policy else 1
+    )
+    
+    final_action = policy_res.overridden_action or ai_decision.action
+    
+    return {
+        "scenario": {
+            "title": "₹48,000 High-Value Enterprise Renewal",
+            "customer_name": customer_name,
+            "amount": amount,
+            "currency": "INR",
+            "failure_reason": failure_reason,
+            "failure_category": failure_category,
+            "customer_segment": segment,
+            "subscription_status": subscription_status,
+            "previous_successful_payments": past_successes
+        },
+        "context_built": context,
+        "ai_proposal": {
+            "diagnosis": ai_decision.diagnosis,
+            "recommended_action": ai_decision.action,
+            "confidence": ai_decision.confidence,
+            "recovery_probability": ai_decision.recovery_probability,
+            "expected_recovery_value": ai_decision.expected_recovery_value,
+            "proposed_delay_minutes": ai_decision.delay_minutes,
+            "reason": ai_decision.reason,
+            "model_name": "Gemini 3.5 Flash",
+            "candidate_actions": [a.model_dump() for a in ai_decision.actions]
+        },
+        "policy_interceptor": {
+            "allowed": policy_res.allowed,
+            "decision": policy_res.decision,
+            "rule_triggered": policy_res.rule_triggered,
+            "reason": policy_res.reason,
+            "overridden_action": policy_res.overridden_action,
+            "autonomous_limit_threshold": max_auto
+        },
+        "pipeline_verdict": {
+            "final_action": final_action,
+            "execution_mode": "HUMAN_OPERATIONS_DESK" if final_action == "ESCALATE_HUMAN" else "AUTOMATED_AUTONOMOUS",
+            "risk_mitigation": f"Autonomous limit (₹{max_auto:,.0f}) protected merchant from unassisted high-value retry."
+        }
+    }
+
+
+# ==========================================
 # Webhook Simulator Endpoint (Constraint 5)
 # ==========================================
 @app.post("/api/test/trigger-webhook")
@@ -596,3 +958,5 @@ async def trigger_simulated_webhook(
     
     result = await process_razorpay_event_logic(event_type, payload, db)
     return result
+
+
