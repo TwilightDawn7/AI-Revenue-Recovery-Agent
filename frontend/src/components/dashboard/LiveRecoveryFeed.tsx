@@ -135,7 +135,10 @@ export function LiveRecoveryFeed({ cases }: LiveRecoveryFeedProps) {
                   </div>
                 </div>
               </div>
-              <span className="text-[10px] font-mono text-[#8B929E] shrink-0">
+              <span
+                className="text-[10px] font-mono text-[#8B929E] shrink-0"
+                suppressHydrationWarning
+              >
                 {formatRelativeTime(evt.time)}
               </span>
             </Link>

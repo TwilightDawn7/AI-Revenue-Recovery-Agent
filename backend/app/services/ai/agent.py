@@ -1,12 +1,14 @@
 import os
 import json
 import logging
+from typing import Optional, Dict, Any, List
 from app.core.config import settings
-from app.schemas.schemas import AIDecisionSchema
+from app.schemas.schemas import AIDecisionSchema, EvaluatedActionSchema
+from app.services.actions.framework import rank_candidate_actions
+from app.services.context.builder import categorize_failure_reason
 
 logger = logging.getLogger("uvicorn")
 
-# Path to local cache file for storing/retrieving LLM outputs during evaluation
 CACHE_PATH = os.path.join(os.path.dirname(__file__), "eval_cache.json")
 
 def load_cache() -> dict:
@@ -27,105 +29,163 @@ def save_cache(cache: dict):
 
 def get_fallback_decision(context: dict) -> AIDecisionSchema:
     """
-    Highly structured, context-aware rule engine representing the AI agent's logic.
-    Used when GEMINI_API_KEY is not set or during quick cached evaluation simulation.
+    Deterministic context-aware decision engine.
+    Used when GEMINI_API_KEY is not set or as a safe fallback when LLM output fails validation.
+    Mandatory safety rule: Never default blindly to a financial retry on unexpected states.
     """
-    problem_type = context.get("problem_type", "")
-    failure_reason = context.get("failure_reason", "")
+    amount = float(context.get("amount", 0.0))
+    raw_failure = context.get("failure_reason", "")
+    failure_category = context.get("failure_category") or categorize_failure_reason(raw_failure)
     subscription_status = context.get("subscription_status", "active")
-    retry_count = context.get("retry_count", 0)
-    amount = context.get("amount", 0.0)
-    customer_history_success = context.get("previous_successful_payments", 0)
+    retry_count = int(context.get("retry_count", 0))
+    past_successes = int(context.get("previous_successful_payments", 0))
     
-    # 1. Respect Cancellation
+    merchant_policy = context.get("merchant_policy", {})
+    max_retries = int(merchant_policy.get("max_retries", 2))
+    max_autonomous = float(merchant_policy.get("max_autonomous_amount", 25000.0))
+    min_interval = int(merchant_policy.get("min_retry_interval_minutes", 30))
+
+    # Evaluate candidate actions with Expected Recovery Value (EV)
+    candidate_actions = rank_candidate_actions(
+        amount=amount,
+        failure_reason=raw_failure,
+        subscription_status=subscription_status,
+        retry_count=retry_count,
+        previous_successful_payments=past_successes,
+        merchant_max_retries=max_retries,
+        merchant_max_autonomous_amount=max_autonomous
+    )
+
+    # 1. Subscription Cancelled / Halted -> Must STOP
     if subscription_status in ["cancelled", "halted"]:
+        stop_action = next((a for a in candidate_actions if a.action == "STOP"), None)
         return AIDecisionSchema(
-            diagnosis="The customer has cancelled their subscription. Retrying would violate user intent and merchant compliance guidelines.",
+            diagnosis="Subscription status is cancelled. Retrying payment would violate merchant compliance guidelines.",
             action="STOP",
             delay_minutes=0,
-            confidence=1.0,
-            reason="Subscription status is cancelled. Stopping recovery efforts."
+            confidence=0.99,
+            recovery_probability=0.0,
+            expected_recovery_value=0.0,
+            actions=candidate_actions,
+            reason="Subscription was terminated by customer. Automated recovery ceased immediately."
         )
 
-    # 2. Maximum Retries Limit Checked at AI level too
-    if retry_count >= 2:
+    # 2. Hard decline / Fraud suspected -> Force STOP / Escalate
+    if failure_category == "HARD_DECLINE":
         return AIDecisionSchema(
-            diagnosis=f"The system has already attempted automated retries {retry_count} times without success.",
-            action="ESCALATE_HUMAN",
+            diagnosis="Hard card decline or fraud restriction flagged by card network. Direct automated retries blocked.",
+            action="STOP",
             delay_minutes=0,
             confidence=0.95,
-            reason="Exceeded maximum automated retry limit. Escalating to human customer operations."
+            recovery_probability=0.0,
+            expected_recovery_value=0.0,
+            actions=candidate_actions,
+            reason="Card network reported a hard decline or restriction. Halting automated attempts."
         )
 
-    # 3. Invalid Credentials or Expired Card
-    if failure_reason in ["EXPIRED_CARD", "INVALID_CARD_DETAILS", "INVALID_CVV", "CARD_EXPIRED"]:
+    # 3. Maximum Retries Limit Reached -> Escalate to Human Operations
+    if retry_count >= max_retries:
+        esc_action = next((a for a in candidate_actions if a.action == "ESCALATE_HUMAN"), candidate_actions[0])
         return AIDecisionSchema(
-            diagnosis="The payment failed due to expired card credentials or invalid card details. Direct retries will continue to fail.",
-            action="REQUEST_PAYMENT_UPDATE",
-            delay_minutes=0,
-            confidence=0.9,
-            reason="Permanent credential error. Initiated a payment update request to email a secure Razorpay card update link to the customer."
-        )
-
-    # 4. High At-Risk Amount -> Escalate to human to avoid indiscriminate billing or checkout abandonment
-    if amount > 25000:
-        return AIDecisionSchema(
-            diagnosis=f"High value transaction of ₹{amount}. Automated retries carry financial decline risks.",
+            diagnosis=f"Payment has failed {retry_count} times consecutively. Automated retry ceiling reached.",
             action="ESCALATE_HUMAN",
             delay_minutes=0,
-            confidence=0.85,
-            reason="Transaction value exceeds autonomous threshold of ₹25,000. Escalating for white-glove manual outreach."
+            confidence=0.96,
+            recovery_probability=esc_action.recovery_probability,
+            expected_recovery_value=esc_action.expected_recovery_value,
+            actions=candidate_actions,
+            reason="Exceeded maximum automated retry limit. Escalating to human customer operations desk."
         )
 
-    # 5. Temporary bank declines (network issue, insufficient funds, etc.)
-    if failure_reason in ["BANK_DECLINE", "INSUFFICIENT_FUNDS", "NETWORK_ERROR", "TEMPORARY_DECLINE"]:
-        # If they have a strong payment history, we are more confident.
-        if customer_history_success >= 3:
-            delay = 30 if retry_count == 0 else 120
+    # 4. Expired Payment Credentials / Invalid Card Details
+    if failure_category == "EXPIRED_PAYMENT_METHOD":
+        link_action = next((a for a in candidate_actions if a.action in ["REQUEST_PAYMENT_UPDATE", "PAYMENT_UPDATE"]), candidate_actions[0])
+        return AIDecisionSchema(
+            diagnosis="Payment failed due to expired credentials or invalid card details. Direct retries on stale credentials will fail.",
+            action="REQUEST_PAYMENT_UPDATE",
+            delay_minutes=0,
+            confidence=0.94,
+            recovery_probability=link_action.recovery_probability,
+            expected_recovery_value=link_action.expected_recovery_value,
+            actions=candidate_actions,
+            reason="Permanent credential error detected. Generated secure Razorpay payment update link for the customer."
+        )
+
+    # 5. High At-Risk Amount -> Propose Action (Policy Gate will validate against autonomous ceiling)
+    if amount > max_autonomous:
+        # AI considers RETRY_LATER or ESCALATE depending on customer trust
+        if past_successes >= 3:
+            retry_action = next((a for a in candidate_actions if a.action in ["RETRY_LATER", "RETRY_PAYMENT"]), candidate_actions[0])
             return AIDecisionSchema(
-                diagnosis=f"Temporary payment failure due to {failure_reason}. Customer has a strong payment history ({customer_history_success} successful renewals), indicating high likelihood of recovery.",
-                action="RETRY_PAYMENT",
-                delay_minutes=delay,
-                confidence=0.92,
-                reason="Temporary bank decline with high-trust customer profile. Proposing delayed retry."
+                diagnosis=f"High-value transaction (INR {amount:,.2f}) failed due to {failure_category}. Customer has a strong payment history ({past_successes} successful renewals).",
+                action="RETRY_LATER",
+                delay_minutes=max(min_interval, 60),
+                confidence=0.96,
+                recovery_probability=retry_action.recovery_probability,
+                expected_recovery_value=retry_action.expected_recovery_value,
+                actions=candidate_actions,
+                reason="High-value trusted customer encountered temporary decline. Proposing delayed retry."
             )
         else:
-            delay = 60
+            esc_action = next((a for a in candidate_actions if a.action == "ESCALATE_HUMAN"), candidate_actions[0])
             return AIDecisionSchema(
-                diagnosis=f"Temporary payment failure due to {failure_reason}. Customer has low payment history. Likelihood of recovery is moderate.",
-                action="RETRY_PAYMENT",
-                delay_minutes=delay,
-                confidence=0.75,
-                reason="Temporary bank decline. Proposing delayed retry."
+                diagnosis=f"High-value transaction of INR {amount:,.2f} with limited billing history. Direct automated retries carry churn risk.",
+                action="ESCALATE_HUMAN",
+                delay_minutes=0,
+                confidence=0.88,
+                recovery_probability=esc_action.recovery_probability,
+                expected_recovery_value=esc_action.expected_recovery_value,
+                actions=candidate_actions,
+                reason="Transaction value exceeds autonomous threshold. Escalating for manual high-touch outreach."
             )
 
-    # Default to escalate for safety
+    # 6. Temporary Bank Declines / Network Errors / Insufficient Funds
+    if failure_category in ["TEMPORARY_ISSUER_FAILURE", "NETWORK_FAILURE", "INSUFFICIENT_FUNDS"]:
+        delay = max(min_interval, 30 if retry_count == 0 else 120)
+        retry_action = next((a for a in candidate_actions if a.action in ["RETRY_LATER", "RETRY_PAYMENT"]), candidate_actions[0])
+        conf = 0.92 if past_successes >= 3 else 0.78
+        return AIDecisionSchema(
+            diagnosis=f"Temporary payment failure categorized as {failure_category}. Customer renewal history shows {past_successes} successful cycles.",
+            action="RETRY_LATER",
+            delay_minutes=delay,
+            confidence=conf,
+            recovery_probability=retry_action.recovery_probability,
+            expected_recovery_value=retry_action.expected_recovery_value,
+            actions=candidate_actions,
+            reason=f"Temporary {failure_category.lower().replace('_', ' ')} detected. Delayed retry scheduled to allow banking rails to recover."
+        )
+
+    # Default fallback: Escalate to human for unresolved categories
+    top_action = candidate_actions[0] if candidate_actions else None
     return AIDecisionSchema(
-        diagnosis=f"Unknown failure code '{failure_reason}'. System cannot determine permanent vs temporary decline status.",
+        diagnosis=f"Unresolved failure code '{raw_failure}'. Failure type cannot be deterministically classified as temporary.",
         action="ESCALATE_HUMAN",
         delay_minutes=0,
-        confidence=0.6,
-        reason="Unresolved failure reason. Escalating for safety."
+        confidence=0.65,
+        recovery_probability=top_action.recovery_probability if top_action else 0.30,
+        expected_recovery_value=top_action.expected_recovery_value if top_action else 0.0,
+        actions=candidate_actions,
+        reason="Unresolved failure reason. Escalating for safety to prevent unauthorized retries."
     )
 
 
 async def get_ai_decision(context: dict, use_cache: bool = True) -> AIDecisionSchema:
     """
-    Resolves the recovery action decision using Gemini if the API key is present.
-    Otherwise falls back to the deterministic context-aware fallback engine.
+    Executes AI reasoning with schema validation and safe fallback.
+    Uses Gemini API when configured, otherwise uses the context-aware fallback engine.
     """
-    # Create a unique key for caching based on the context values
     cache_key = f"{context.get('amount')}_{context.get('retry_count')}_{context.get('failure_reason')}_{context.get('subscription_status')}_{context.get('previous_successful_payments')}"
     
     if use_cache:
         cache = load_cache()
         if cache_key in cache:
-            logger.info(f"AI Decision Cache HIT for case: {cache_key}")
-            return AIDecisionSchema(**cache[cache_key])
+            try:
+                cached_data = cache[cache_key]
+                return AIDecisionSchema(**cached_data)
+            except Exception:
+                pass
 
-    # If API key is not set, use fallback engine directly
     if not settings.GEMINI_API_KEY:
-        logger.info("GEMINI_API_KEY not found in environment. Using fallback logic engine.")
         decision = get_fallback_decision(context)
         if use_cache:
             cache = load_cache()
@@ -133,52 +193,88 @@ async def get_ai_decision(context: dict, use_cache: bool = True) -> AIDecisionSc
             save_cache(cache)
         return decision
 
-    # Live call to Gemini using google-generativeai
+    # Live call to Gemini with structured output
     try:
         import google.generativeai as genai
         genai.configure(api_key=settings.GEMINI_API_KEY)
         
+        amount = context.get("amount")
+        retry_count = context.get("retry_count")
+        failure_cat = context.get("failure_category", "UNKNOWN")
+        sub_status = context.get("subscription_status", "active")
+        successes = context.get("previous_successful_payments", 0)
+        segment = context.get("customer_segment", "NORMAL")
+        
         prompt = f"""
-        You are the AI Revenue Recovery Agent. Analyze the following payment failure context and select the best recovery action.
+        You are the AI Revenue Recovery Agent. Analyze the sanitized payment failure context below and recommend the optimal recovery strategy.
         
         CONTEXT:
-        - At-Risk Amount: INR {context.get('amount')}
-        - Current Retry Count: {context.get('retry_count')}
-        - Problem Type: {context.get('problem_type')}
-        - Payment Failure Reason: {context.get('failure_reason')}
-        - Subscription Status: {context.get('subscription_status')}
-        - Successful Past Renewals: {context.get('previous_successful_payments')}
+        - At-Risk Amount: INR {amount}
+        - Current Retry Count: {retry_count}
+        - Failure Category: {failure_cat}
+        - Subscription Status: {sub_status}
+        - Customer Segment: {segment}
+        - Successful Past Renewals: {successes}
         
         RULES:
-        1. If the subscription is cancelled or halted, you MUST recommend STOP.
-        2. If the current retry count is >= 2, you MUST recommend ESCALATE_HUMAN.
-        3. If the amount is > 25,000 INR, you MUST recommend ESCALATE_HUMAN.
-        4. If the failure is due to card expiration or incorrect credentials (e.g. EXPIRED_CARD, INVALID_CARD_DETAILS, INVALID_CVV), you MUST recommend REQUEST_PAYMENT_UPDATE.
-        5. If the failure is temporary (e.g. BANK_DECLINE, INSUFFICIENT_FUNDS, NETWORK_ERROR), you should recommend RETRY_PAYMENT with a delay of at least 30 minutes.
+        1. If subscription status is cancelled or halted, you MUST recommend STOP.
+        2. If retry count >= 2, you MUST recommend ESCALATE_HUMAN.
+        3. If failure category is EXPIRED_PAYMENT_METHOD, you MUST recommend REQUEST_PAYMENT_UPDATE.
+        4. If failure category is TEMPORARY_ISSUER_FAILURE, INSUFFICIENT_FUNDS, or NETWORK_FAILURE, recommend RETRY_LATER with delay >= 30m.
+        5. If failure category is HARD_DECLINE, recommend STOP.
+        6. Provide a concise, professional explanation suitable for a merchant dashboard. Do NOT expose internal chain-of-thought.
         
-        Return your analysis as a JSON object matching this schema:
+        Return JSON adhering strictly to the schema:
         {{
-            "diagnosis": "Detailed string explaining why the payment failed and customer's overall billing health",
-            "action": "RETRY_PAYMENT" | "REQUEST_PAYMENT_UPDATE" | "ESCALATE_HUMAN" | "STOP",
-            "delay_minutes": integer (minimum 30 if action is RETRY_PAYMENT),
-            "confidence": float (between 0.0 and 1.0),
-            "reason": "String explaining the reason behind this decision"
+            "diagnosis": "Concise failure diagnosis",
+            "action": "RETRY_LATER" | "REQUEST_PAYMENT_UPDATE" | "ESCALATE_HUMAN" | "STOP",
+            "delay_minutes": integer (>= 30 for RETRY_LATER),
+            "confidence": float (0.0 to 1.0, AI confidence in this diagnosis),
+            "recovery_probability": float (0.0 to 1.0, estimated likelihood of recovering funds),
+            "reason": "Concise explanation for merchant"
         }}
         """
         
-        # Configure model call for structured JSON output
-        model = genai.GenerativeModel("gemini-3-flash-preview")
+        model = genai.GenerativeModel("gemini-3.6-flash")
         response = model.generate_content(
             prompt,
             generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=AIDecisionSchema
+                response_mime_type="application/json"
             )
         )
         
         data = json.loads(response.text)
-        decision = AIDecisionSchema(**data)
-        logger.info(f"Gemini API Decision Successful: {decision.action} ({decision.confidence})")
+        
+        # Calculate EV and attach ranked candidate actions
+        candidate_actions = rank_candidate_actions(
+            amount=float(amount),
+            failure_reason=context.get("failure_reason", ""),
+            subscription_status=sub_status,
+            retry_count=int(retry_count),
+            previous_successful_payments=int(successes)
+        )
+        
+        # Ensure action mapping is normalized
+        act = data.get("action", "ESCALATE_HUMAN")
+        if act == "RETRY_PAYMENT":
+            act = "RETRY_LATER"
+            
+        selected_cand = next((a for a in candidate_actions if a.action in [act, "RETRY_LATER" if act == "RETRY_PAYMENT" else act]), candidate_actions[0])
+        
+        rec_prob = float(data.get("recovery_probability", selected_cand.recovery_probability))
+        conf = float(data.get("confidence", 0.85))
+        ev = round(rec_prob * float(amount) - selected_cand.estimated_cost - selected_cand.friction_penalty, 2)
+        
+        decision = AIDecisionSchema(
+            diagnosis=data.get("diagnosis", f"Diagnosed as {failure_cat}"),
+            action=act,
+            delay_minutes=int(data.get("delay_minutes", 30)),
+            confidence=max(0.0, min(1.0, conf)),
+            recovery_probability=max(0.0, min(1.0, rec_prob)),
+            expected_recovery_value=ev,
+            actions=candidate_actions,
+            reason=data.get("reason", "Action selected based on customer recovery profile.")
+        )
         
         if use_cache:
             cache = load_cache()
@@ -188,7 +284,7 @@ async def get_ai_decision(context: dict, use_cache: bool = True) -> AIDecisionSc
         return decision
 
     except Exception as e:
-        logger.error(f"Gemini API call failed: {e}. Falling back to rule-based engine.")
+        logger.warning(f"AI decision call failed ({e}). Falling back to safe deterministic decision engine.")
         decision = get_fallback_decision(context)
         if use_cache:
             cache = load_cache()
