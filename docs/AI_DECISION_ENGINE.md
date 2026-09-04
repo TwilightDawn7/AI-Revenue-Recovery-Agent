@@ -19,35 +19,40 @@ The AI never directly triggers payment charges or modifies database statuses wit
 
 ```mermaid
 flowchart TD
-    START(["🚨 Payment Failure Ingested"]) --> GATHER["1. Context Gathering (app/services/context/builder.py)"]
+    START(["Payment Failure Ingested"]) --> GATHER["1. Context Gathering (app/services/context/builder.py)"]
     
-    subgraph Sanitization ["Zero-PII & Prompt Defense"]
+    subgraph Sanitization ["Zero-PII and Prompt Defense"]
         GATHER --> STRIP["Strip Names, Phone Numbers, Email, Card Data"]
-        STRIP --> SEC["Sanitize Injection Tokens ([INST], ignore instructions)"]
+        STRIP --> SEC["Sanitize Injection Tokens"]
         SEC --> SEG["Compute Customer Segment (LOYAL, NORMAL, AT_RISK, HIGH_VALUE)"]
     end
 
-    SEG --> PROMPT["2. Construct Gemini 3.5 Flash Prompt (Structured JSON Schema)"]
+    SEG --> PROMPT["2. Construct Gemini 3.5 Flash Prompt (JSON Schema)"]
     
     subgraph ModelInference ["Gemini 3.5 Flash Inference"]
         PROMPT --> LLM{"Gemini API Call"}
         LLM -->|Success| PARSE["Parse Structured Output (AIDecisionSchema)"]
-        LLM -->|Failure / Timeout| FALLBACK["Deterministic Fallback Engine (get_fallback_decision)"]
+        LLM -->|Failure / Timeout| FALLBACK["Deterministic Fallback Engine"]
     end
 
-    PARSE & FALLBACK --> EV_CALC["3. Multi-Action Valuation & Ranking (Net EV Calculation)"]
+    PARSE --> EV_CALC["3. Multi-Action Valuation and Ranking (Net EV)"]
+    FALLBACK --> EV_CALC
     
     subgraph EVValuation ["Net Expected Recovery Value Calculation"]
-        EV_CALC --> ACT1["Candidate: RETRY_NOW (High friction risk)"]
-        EV_CALC --> ACT2["Candidate: RETRY_LATER (Optimal bank cooldown)"]
-        EV_CALC --> ACT3["Candidate: REQUEST_PAYMENT_UPDATE (Payment Link)"]
-        EV_CALC --> ACT4["Candidate: ESCALATE_HUMAN (Tier-2 desk)"]
-        EV_CALC --> ACT5["Candidate: STOP (Zero retries)"]
+        EV_CALC --> ACT1["Candidate: RETRY_NOW"]
+        EV_CALC --> ACT2["Candidate: RETRY_LATER"]
+        EV_CALC --> ACT3["Candidate: REQUEST_PAYMENT_UPDATE"]
+        EV_CALC --> ACT4["Candidate: ESCALATE_HUMAN"]
+        EV_CALC --> ACT5["Candidate: STOP"]
     end
 
-    ACT1 & ACT2 & ACT3 & ACT4 & ACT5 --> RANK["4. Rank Actions by Net EV"]
-    RANK --> OUT["5. Emit Proposed AI Decision & Persist in AIDecision Table"]
-    OUT --> NEXT(["🛡️ Submit Proposal to Deterministic Policy Gate"])
+    ACT1 --> RANK["4. Rank Actions by Net EV"]
+    ACT2 --> RANK
+    ACT3 --> RANK
+    ACT4 --> RANK
+    ACT5 --> RANK
+    RANK --> OUT["5. Emit Proposed AI Decision"]
+    OUT --> NEXT(["Submit Proposal to Deterministic Policy Gate"])
 
     style Sanitization fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
     style ModelInference fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#f8fafc
@@ -94,8 +99,8 @@ Consider a failed renewal of **₹2,499.00** caused by `BANK_SERVER_BUSY` for a 
 
 ```mermaid
 xychart-beta
-    title "Net Expected Recovery Value (EV) Comparison (₹2,499 Invoice)"
-    x-axis ["RETRY_NOW", "RETRY_LATER (60m)", "PAYMENT_UPDATE_LINK", "ESCALATE_HUMAN", "STOP"]
+    title "Net Expected Recovery Value EV Comparison for 2499 INR Invoice"
+    x-axis ["RETRY_NOW", "RETRY_LATER 60m", "PAYMENT_UPDATE_LINK", "ESCALATE_HUMAN", "STOP"]
     y-axis "Net EV in INR" 0 --> 2200
     bar [729, 2119, 1209, 1424, 0]
 ```
@@ -123,9 +128,9 @@ To ensure explainability and prevent model hallucinations, the platform explicit
 ```mermaid
 classDiagram
     class AIDecisionMetrics {
-        +float confidence "0.0 - 1.0 (How certain is the AI in its diagnosis?)"
-        +float recovery_probability "0.0 - 1.0 (What is the real statistical success rate?)"
-        +float expected_recovery_value "INR (Risk-adjusted net financial yield)"
+        +float confidence
+        +float recovery_probability
+        +float expected_recovery_value
     }
 ```
 
@@ -140,13 +145,13 @@ When the Gemini API is unreachable, times out, or when running offline evaluatio
 
 ```mermaid
 flowchart TD
-    FB_IN["🚨 Fallback Triggered"] --> R1{"Failure Reason?"}
+    FB_IN["Fallback Triggered"] --> R1{"Failure Reason?"}
     
-    R1 -->|EXPIRED_CARD / INVALID_CARD| FB_LINK["Propose: REQUEST_PAYMENT_UPDATE<br/>(Confidence: 0.95, Delay: 0m)"]
-    R1 -->|SUBSCRIPTION_CANCELLED| FB_STOP["Propose: STOP<br/>(Confidence: 1.0, Delay: 0m)"]
-    R1 -->|INSUFFICIENT_FUNDS| FB_FUNDS["Propose: RETRY_LATER<br/>(Confidence: 0.85, Delay: 120m)"]
-    R1 -->|BANK_DECLINE / GATEWAY_ERROR| FB_RETRY["Propose: RETRY_LATER<br/>(Confidence: 0.80, Delay: 60m)"]
-    R1 -->|DEFAULT / UNKNOWN| FB_DEF["Propose: RETRY_LATER<br/>(Confidence: 0.70, Delay: 30m)"]
+    R1 -->|EXPIRED_CARD or INVALID_CARD| FB_LINK["Propose: REQUEST_PAYMENT_UPDATE<br/>Confidence: 0.95, Delay: 0m"]
+    R1 -->|SUBSCRIPTION_CANCELLED| FB_STOP["Propose: STOP<br/>Confidence: 1.0, Delay: 0m"]
+    R1 -->|INSUFFICIENT_FUNDS| FB_FUNDS["Propose: RETRY_LATER<br/>Confidence: 0.85, Delay: 120m"]
+    R1 -->|BANK_DECLINE or GATEWAY_ERROR| FB_RETRY["Propose: RETRY_LATER<br/>Confidence: 0.80, Delay: 60m"]
+    R1 -->|DEFAULT or UNKNOWN| FB_DEF["Propose: RETRY_LATER<br/>Confidence: 0.70, Delay: 30m"]
 
     style FB_IN fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#f8fafc
 ```

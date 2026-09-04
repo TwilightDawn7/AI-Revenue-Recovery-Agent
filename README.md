@@ -31,9 +31,9 @@ Benchmarked across 1,000 discrete simulated failure scenarios (fixed seed `42`, 
 
 ```mermaid
 xychart-beta
-    title "Benchmark Performance: Recovered Revenue across 1,000 Scenarios (₹ Millions)"
+    title "Benchmark Performance: Recovered Revenue across 1000 Scenarios in Million INR"
     x-axis ["Always Retry", "Failure-Code Rules", "Rule Engine", "AI Recovery Agent"]
-    y-axis "Recovered Amount (₹M)" 0 --> 9
+    y-axis "Recovered Amount in Million INR" 0 --> 9
     bar [0.92, 4.26, 6.76, 7.99]
 ```
 

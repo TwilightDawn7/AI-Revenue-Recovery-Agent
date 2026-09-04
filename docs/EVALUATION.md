@@ -53,9 +53,9 @@ Total Revenue at Risk across test dataset: **₹12,953,578.15**
 
 ```mermaid
 xychart-beta
-    title "Recovered Revenue across 1,000 Cases (in ₹ Millions)"
+    title "Recovered Revenue across 1000 Cases in Million INR"
     x-axis ["Always Retry", "Failure-Code Rules", "Rule Engine", "AI Recovery Agent"]
-    y-axis "Recovered Amount (₹M)" 0 --> 9
+    y-axis "Recovered Amount in Million INR" 0 --> 9
     bar [0.92, 4.26, 6.76, 7.99]
 ```
 

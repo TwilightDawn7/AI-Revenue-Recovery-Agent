@@ -10,28 +10,28 @@ The **AI Revenue Recovery Agent** is a full-stack, event-driven system built to 
 
 ```mermaid
 flowchart TD
-    subgraph External ["External Services / Client Rails"]
-        RZP[Razorpay Payment Gateway]
-        SIM[Webhook Simulator / Test Trigger]
-        GEMINI[Google Gemini API]
+    subgraph External ["External Services and Client Rails"]
+        RZP["Razorpay Payment Gateway"]
+        SIM["Webhook Simulator / Test Trigger"]
+        GEMINI["Google Gemini API"]
     end
 
     subgraph Backend ["FastAPI Backend Application"]
-        HANDLER[Webhook & API Handler (`app/main.py`)]
-        DB_LAYER[(PostgreSQL / SQLite Fallback)]
-        AI_SVC[AI Agent Service (`app/services/ai/agent.py`)]
-        POL_SVC[Policy Engine (`app/services/policy/engine.py`)]
-        RZP_CLIENT[Razorpay Client (`app/services/razorpay/client.py`)]
-        INNGEST_WORKFLOW[Inngest Durable Workflow (`app/workflows/recovery.py`)]
+        HANDLER["Webhook and API Handler (app/main.py)"]
+        DB_LAYER[("PostgreSQL / SQLite Fallback")]
+        AI_SVC["AI Agent Service (app/services/ai/agent.py)"]
+        POL_SVC["Policy Engine (app/services/policy/engine.py)"]
+        RZP_CLIENT["Razorpay Client (app/services/razorpay/client.py)"]
+        INNGEST_WORKFLOW["Inngest Durable Workflow (app/workflows/recovery.py)"]
     end
 
     subgraph Frontend ["Next.js 16 Merchant Console"]
-        DASHBOARD[Executive Dashboard (`/`)]
-        CASES[Case List & Detail (`/cases`, `/cases/[id]`)]
-        SIM_UI[Interactive Simulator (`/simulator`)]
-        EVAL_UI[Evaluation Benchmark UI (`/evaluation`)]
-        SETTINGS_UI[Merchant Settings / Policy Studio (`/settings`)]
-        ACTIVITY_UI[Live Audit Stream (`/activity`)]
+        DASHBOARD["Executive Dashboard (/)"]
+        CASES["Case List and Detail (/cases)"]
+        SIM_UI["Interactive Simulator (/simulator)"]
+        EVAL_UI["Evaluation Benchmark UI (/evaluation)"]
+        SETTINGS_UI["Merchant Settings / Policy Studio (/settings)"]
+        ACTIVITY_UI["Live Audit Stream (/activity)"]
     end
 
     SIM -->|Simulated Webhook| HANDLER

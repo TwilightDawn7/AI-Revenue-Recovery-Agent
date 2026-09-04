@@ -9,9 +9,9 @@ The platform includes **10 pre-configured deterministic demo scenarios** coverin
 
 ```mermaid
 flowchart LR
-    A["🕹️ Scenario Simulator (/simulator)"] -->|One-Click Trigger| B["⚡ FastAPI Backend (/api/simulator/trigger)"]
-    B -->|Ingest Event| C["📡 Inngest Durable Workflow"]
-    C -->|Real-Time Step Updates| D["📊 Next.js Operations Console (Live Updates)"]
+    A["Scenario Simulator (/simulator)"] -->|One-Click Trigger| B["FastAPI Backend (/api/simulator/trigger)"]
+    B -->|Ingest Event| C["Inngest Durable Workflow"]
+    C -->|Real-Time Step Updates| D["Next.js Operations Console"]
 
     style A fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
     style B fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#f8fafc
@@ -21,25 +21,35 @@ flowchart LR
 
 ---
 
-## 📋 10 Curated Scenario Catalog
+## 📋 10 Curated Scenario Taxonomy
 
 ```mermaid
-mindmap
-  root((Demo Scenarios))
-    Standard Retries
-      Scenario 1: Loyal Subscriber - Bank Downtime
-      Scenario 2: Insufficient Funds - Salary Cycle
-    Credential Errors
-      Scenario 3: Expired Card - Payment Link
-      Scenario 4: Invalid CVV - Update Flow
-    Deterministic Safety Gates
-      Scenario 5: Cancelled Subscription - Guardrail Stop
-      Scenario 6: High-Value Enterprise - Escalation
-      Scenario 7: Exceeded Retries - Escalation
-    Edge Cases & Attacks
-      Scenario 8: Race Condition - Pre-Check Capture
-      Scenario 9: Prompt Injection - Sanitized Defense
-      Scenario 10: AI Offline - Fallback Execution
+flowchart TD
+    ROOT["10 Curated Scenarios"]
+    
+    ROOT --> CAT1["1. Standard Retries"]
+    CAT1 --> S1["Scenario 1: Loyal Subscriber (Bank Downtime)"]
+    CAT1 --> S2["Scenario 2: Insufficient Funds (Salary Delay)"]
+
+    ROOT --> CAT2["2. Credential Errors"]
+    CAT2 --> S3["Scenario 3: Expired Card (Payment Link)"]
+    CAT2 --> S4["Scenario 4: Invalid CVV (Update Flow)"]
+
+    ROOT --> CAT3["3. Deterministic Safety Gates"]
+    CAT3 --> S5["Scenario 5: Cancelled Subscription (Guardrail Stop)"]
+    CAT3 --> S6["Scenario 6: High-Value Enterprise (Escalation)"]
+    CAT3 --> S7["Scenario 7: Exceeded Retries (Escalation)"]
+
+    ROOT --> CAT4["4. Edge Cases and Attacks"]
+    CAT4 --> S8["Scenario 8: Race Condition (Pre-Check Capture)"]
+    CAT4 --> S9["Scenario 9: Prompt Injection (Sanitized Defense)"]
+    CAT4 --> S10["Scenario 10: AI Offline (Fallback Engine)"]
+
+    style ROOT fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#f8fafc
+    style CAT1 fill:#0f172a,stroke:#38bdf8,stroke-width:1px,color:#f8fafc
+    style CAT2 fill:#0f172a,stroke:#38bdf8,stroke-width:1px,color:#f8fafc
+    style CAT3 fill:#0f172a,stroke:#38bdf8,stroke-width:1px,color:#f8fafc
+    style CAT4 fill:#0f172a,stroke:#38bdf8,stroke-width:1px,color:#f8fafc
 ```
 
 ---
