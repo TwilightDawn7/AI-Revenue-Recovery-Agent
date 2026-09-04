@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useMounted } from "@/hooks/use-mounted";
 import {
   useCaseDetail,
@@ -18,25 +18,18 @@ import {
   formatDate,
   formatRelativeTime,
   getStatusStyle,
-  getActionStyle,
 } from "@/lib/formatters";
 import {
   ArrowLeft,
   Sparkles,
   ShieldCheck,
   ShieldAlert,
-  Clock,
   RotateCcw,
   CheckCircle2,
   AlertTriangle,
   FileCode,
-  User,
-  CreditCard,
   Zap,
   ExternalLink,
-  ChevronDown,
-  ChevronUp,
-  Cpu,
   Layers,
   Link2,
   Copy,
@@ -44,12 +37,12 @@ import {
   Ban,
   UserCheck,
   DollarSign,
-  Radio,
+  History,
+  Scale,
 } from "lucide-react";
 
 export default function CaseDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const id = params?.id as string;
   const mounted = useMounted();
 
@@ -61,7 +54,6 @@ export default function CaseDetailPage() {
   const stopCase = useStopCase();
   const simulatePayment = useSimulatePaymentResolution();
 
-  const [isRawJsonOpen, setIsRawJsonOpen] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<{
     type: "success" | "error" | "info";
     text: string;
@@ -116,7 +108,7 @@ export default function CaseDetailPage() {
     if (!caseItem) return;
     try {
       showFeedback("Routing to Human Operations...", "info");
-      const res = await escalateCase.mutateAsync(caseItem.id);
+      await escalateCase.mutateAsync(caseItem.id);
       showFeedback("Case escalated to Tier-2 operations desk.", "success");
       refetch();
     } catch (err: any) {
@@ -128,7 +120,7 @@ export default function CaseDetailPage() {
     if (!caseItem) return;
     try {
       showFeedback("Halting automated recovery workflow...", "info");
-      const res = await stopCase.mutateAsync(caseItem.id);
+      await stopCase.mutateAsync(caseItem.id);
       showFeedback("Recovery workflow safely terminated.", "success");
       refetch();
     } catch (err: any) {
@@ -175,7 +167,7 @@ export default function CaseDetailPage() {
           Recovery Case Not Found
         </h2>
         <p className="text-xs text-[#8B929E] max-w-sm mx-auto">
-          Case #{id} could not be retrieved from PostgreSQL or may not exist.
+          Case #{id} could not be retrieved from PostgreSQL database or may not exist.
         </p>
         <Link
           href="/cases"
@@ -188,10 +180,38 @@ export default function CaseDetailPage() {
   }
 
   const statusStyle = getStatusStyle(caseItem.status);
-  const latestDecision =
-    caseItem.ai_decisions?.[caseItem.ai_decisions.length - 1];
-  const latestAction =
-    caseItem.recovery_actions?.[caseItem.recovery_actions.length - 1];
+  
+  // Authoritative Backend Data Extraction
+  const latestAIDecision = caseItem.ai_decisions?.[caseItem.ai_decisions.length - 1];
+  const latestRecoveryDecision = caseItem.recovery_decisions?.[caseItem.recovery_decisions.length - 1];
+
+  // Derive candidate actions evaluated from backend
+  const candidateActions =
+    latestRecoveryDecision?.actions_evaluated ||
+    latestAIDecision?.actions_evaluated ||
+    [];
+
+  // Authoritative Policy Evaluation from Backend
+  const policyDecisionLabel = latestRecoveryDecision?.policy_decision || (
+    caseItem.status === "ESCALATED" ? "ESCALATED" :
+    caseItem.status === "STOPPED" ? "BLOCKED" : "APPROVED"
+  );
+  const policyRule = latestRecoveryDecision?.policy_rule || (
+    caseItem.status === "ESCALATED" ? "POLICY_ESCALATION_RULE" :
+    caseItem.status === "STOPPED" ? "POLICY_SAFETY_GUARD" : "STANDARD_POLICY"
+  );
+  const policyReason = latestRecoveryDecision?.policy_reason || (
+    caseItem.status === "ESCALATED"
+      ? `Case routed for human operator review per policy requirements.`
+      : caseItem.status === "STOPPED"
+      ? `Automated recovery halted by deterministic policy guard.`
+      : `Action authorized within autonomous operating limits.`
+  );
+  const finalAction = latestRecoveryDecision?.final_action || (
+    policyDecisionLabel === "BLOCKED" ? "STOP" :
+    policyDecisionLabel === "ESCALATED" ? "ESCALATE_HUMAN" :
+    latestAIDecision?.recommended_action || "RETRY_PAYMENT"
+  );
 
   // Find if any payment link was generated in actions
   const paymentLinkAction = caseItem.recovery_actions?.find(
@@ -203,25 +223,6 @@ export default function CaseDetailPage() {
     ? `https://rzp.io/i/${paymentLinkAction.external_reference}`
     : null;
 
-  // Derive Policy Compliance status
-  const isCancelled = caseItem.problem_type.includes("CANCELLED");
-  const isHighValue = caseItem.amount_at_risk > 25000;
-  const isMaxRetries = caseItem.retry_count >= 2;
-
-  let policyDecisionLabel = "APPROVED";
-  let policyOverrideReason = "Within standard recovery constraints";
-
-  if (isCancelled) {
-    policyDecisionLabel = "BLOCKED";
-    policyOverrideReason = "Subscription was cancelled by user — retries prohibited to protect merchant reputation.";
-  } else if (isHighValue) {
-    policyDecisionLabel = "ESCALATED";
-    policyOverrideReason = `Amount (${formatCurrency(caseItem.amount_at_risk)}) exceeds autonomous limit (₹25,000). Routed to human ops.`;
-  } else if (isMaxRetries) {
-    policyDecisionLabel = "ESCALATED";
-    policyOverrideReason = "Maximum retry attempts (2) reached. Escalated to prevent card network spam.";
-  }
-
   const isAnyActionPending =
     triggerAnalysis.isPending ||
     manualRetry.isPending ||
@@ -232,7 +233,7 @@ export default function CaseDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* Navigation & Live Status Bar */}
+      {/* Navigation & Live Polling Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <Link
           href="/cases"
@@ -244,7 +245,7 @@ export default function CaseDetailPage() {
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Live Polling (3s)
+            Live Sync
           </span>
           <button
             onClick={handleManualAnalyze}
@@ -285,7 +286,7 @@ export default function CaseDetailPage() {
         </div>
       )}
 
-      {/* Case Header Hero Banner */}
+      {/* Case Hero Banner */}
       <div className="p-6 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4 relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -303,7 +304,7 @@ export default function CaseDetailPage() {
               </span>
             </div>
             <p className="text-xs text-[#8B929E] font-mono">
-              Payment ID: {caseItem.payment_id || "N/A"} • Merchant: Default Merchant • Created {formatDate(caseItem.created_at)}
+              Payment ID: {caseItem.payment_id || "N/A"} • Created {formatDate(caseItem.created_at)}
             </p>
           </div>
 
@@ -332,37 +333,37 @@ export default function CaseDetailPage() {
         {/* Customer & Transaction Profile Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-3 border-t border-[#191D26] text-xs">
           <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D]">
-            <span className="text-[#8B929E] block text-[11px]">Customer</span>
+            <span className="text-[#8B929E] block text-[11px]">Customer & Segment</span>
             <span className="font-semibold text-[#F5F7FA] block truncate mt-0.5">
               {caseItem.customer?.name || "Customer"}
             </span>
-            <span className="text-[#8B929E] text-[11px] font-mono block truncate">
-              {caseItem.customer?.email || "customer@example.com"}
+            <span className="text-[#8B7CFF] text-[11px] font-mono block uppercase">
+              {caseItem.customer?.segment || (caseItem.amount_at_risk > 25000 ? "HIGH VALUE" : "LOYAL CUSTOMER")}
             </span>
           </div>
 
           <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D]">
-            <span className="text-[#8B929E] block text-[11px]">Problem Classification</span>
+            <span className="text-[#8B929E] block text-[11px]">Failure Classification</span>
             <span className="font-mono font-semibold text-[#8B7CFF] block truncate mt-0.5">
               {caseItem.problem_type}
             </span>
             <span className="text-[#8B929E] text-[11px] block truncate">
-              Payment Gateway Failure
+              Gateway Diagnostic Code
             </span>
           </div>
 
           <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D]">
-            <span className="text-[#8B929E] block text-[11px]">Retry Policy Tracker</span>
+            <span className="text-[#8B929E] block text-[11px]">Attempts Executed</span>
             <span className="font-mono font-semibold text-[#F5F7FA] block mt-0.5">
-              {caseItem.retry_count} / 2 Attempts
+              {caseItem.retry_count} {caseItem.retry_count === 1 ? "Attempt" : "Attempts"}
             </span>
             <span className="text-[#8B929E] text-[11px] block">
-              Max 2 retries per cycle
+              Governed by policy limit
             </span>
           </div>
 
           <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D]">
-            <span className="text-[#8B929E] block text-[11px]">Durable Window</span>
+            <span className="text-[#8B929E] block text-[11px]">Recovery Window</span>
             <span className="font-mono text-[#F5F7FA] block truncate mt-0.5">
               {formatRelativeTime(caseItem.recovery_window_started_at)}
             </span>
@@ -373,7 +374,7 @@ export default function CaseDetailPage() {
         </div>
       </div>
 
-      {/* OPERATOR CONTROL CONSOLE (Interactive Overrides) */}
+      {/* OPERATOR CONTROL CONSOLE */}
       <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -382,10 +383,10 @@ export default function CaseDetailPage() {
             </span>
             <div>
               <h2 className="text-sm font-semibold text-[#F5F7FA]">
-                Operator Action Control Console
+                Operator Action Console
               </h2>
               <p className="text-[11px] text-[#8B929E]">
-                Execute manual interventions or override automated AI recovery policies in real time.
+                Execute manual recovery interventions or override automated AI recovery policies.
               </p>
             </div>
           </div>
@@ -408,7 +409,7 @@ export default function CaseDetailPage() {
               Charge Retry Now
             </span>
             <span className="text-[10px] text-[#8B929E] mt-0.5">
-              Dispatch card retry immediately
+              Dispatch immediate card retry
             </span>
           </button>
 
@@ -468,7 +469,7 @@ export default function CaseDetailPage() {
               Halt Recovery
             </span>
             <span className="text-[10px] text-[#8B929E] mt-0.5">
-              Stop all workflows permanently
+              Stop workflows permanently
             </span>
           </button>
 
@@ -488,7 +489,7 @@ export default function CaseDetailPage() {
               Mark as Recovered
             </span>
             <span className="text-[10px] text-emerald-400/70 mt-0.5">
-              Emit payment.captured webhook
+              Emit payment.captured event
             </span>
           </button>
         </div>
@@ -538,61 +539,64 @@ export default function CaseDetailPage() {
         )}
       </div>
 
-      {/* DECISION REPLAY STEPPER (Phase 10) */}
+      {/* DECISION REPLAY TIMELINE */}
       <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-[#23262D]">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#8B7CFF]" />
+            <History className="w-4 h-4 text-[#8B7CFF]" />
             <h2 className="text-sm font-semibold text-[#F5F7FA]">
-              Agent Decision Replay Timeline
+              Decision Replay & Chain of Custody
             </h2>
           </div>
           <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-            Auditable Chain of Custody
+            Immutable Audit Trail
           </span>
         </div>
 
-        {/* Horizontal Step Progression */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
-          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
-            <span className="text-[10px] font-mono text-[#8B929E] block">Step 1</span>
+        {/* Step Progression */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2.5 text-xs">
+          <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Stage 1</span>
             <span className="font-semibold text-rose-400 block truncate">Payment Failed</span>
             <span className="text-[10px] font-mono text-[#8B929E] block truncate">{caseItem.problem_type}</span>
           </div>
-          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
-            <span className="text-[10px] font-mono text-[#8B929E] block">Step 2</span>
-            <span className="font-semibold text-sky-400 block truncate">Context Built</span>
-            <span className="text-[10px] font-mono text-[#8B929E] block truncate">PII Sanitized</span>
+          <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Stage 2</span>
+            <span className="font-semibold text-sky-400 block truncate">Context Assembled</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">Zero PII Sanitized</span>
           </div>
-          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
-            <span className="text-[10px] font-mono text-[#8B929E] block">Step 3</span>
-            <span className="font-semibold text-[#8B7CFF] block truncate">AI Diagnosis</span>
-            <span className="text-[10px] font-mono text-[#8B929E] block truncate">Gemini Reasoned</span>
+          <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Stage 3</span>
+            <span className="font-semibold text-[#8B7CFF] block truncate">AI Diagnosed</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">
+              {latestAIDecision?.recommended_action || "RETRY_PAYMENT"}
+            </span>
           </div>
-          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
-            <span className="text-[10px] font-mono text-[#8B929E] block">Step 4</span>
-            <span className="font-semibold text-[#8B7CFF] block truncate">EV Ranking</span>
-            <span className="text-[10px] font-mono text-[#8B929E] block truncate">Candidate Actions</span>
+          <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Stage 4</span>
+            <span className="font-semibold text-emerald-400 block truncate">EV Valuation</span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">
+              {latestAIDecision?.expected_recovery_value ? formatCurrency(latestAIDecision.expected_recovery_value, true) : "Calculated"}
+            </span>
           </div>
-          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
-            <span className="text-[10px] font-mono text-[#8B929E] block">Step 5</span>
-            <span className={`font-semibold block truncate ${policyDecisionLabel === "APPROVED" ? "text-emerald-400" : "text-amber-400"}`}>Policy Gate</span>
+          <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Stage 5</span>
+            <span className={`font-semibold block truncate ${policyDecisionLabel === "APPROVED" ? "text-emerald-400" : "text-amber-400"}`}>
+              Policy Gate
+            </span>
             <span className="text-[10px] font-mono text-[#8B929E] block truncate">{policyDecisionLabel}</span>
           </div>
-          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
-            <span className="text-[10px] font-mono text-[#8B929E] block">Step 6</span>
-            <span className="font-semibold text-[#F5F7FA] block truncate">Action Executed</span>
-            <span className="text-[10px] font-mono text-[#8B929E] block truncate">{caseItem.recovery_actions?.[0]?.action_type || "Pending"}</span>
-          </div>
-          <div className="p-2.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
-            <span className="text-[10px] font-mono text-[#8B929E] block">Step 7</span>
-            <span className={`font-semibold block truncate ${caseItem.status === "RECOVERED" ? "text-emerald-400" : "text-[#8B929E]"}`}>Outcome</span>
-            <span className="text-[10px] font-mono text-[#8B929E] block truncate">{caseItem.status}</span>
+          <div className="p-3 rounded-lg bg-[#121722] border border-[#23262D] space-y-1">
+            <span className="text-[10px] font-mono text-[#8B929E] block">Stage 6</span>
+            <span className={`font-semibold block truncate ${caseItem.status === "RECOVERED" ? "text-emerald-400" : "text-[#F5F7FA]"}`}>
+              Final Action
+            </span>
+            <span className="text-[10px] font-mono text-[#8B929E] block truncate">{finalAction}</span>
           </div>
         </div>
       </div>
 
-      {/* Flagship Row: AI Decision vs Policy Engine Guardrail */}
+      {/* Row: AI Proposal vs Deterministic Policy Gate */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. AI Decision Card */}
         <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4 relative overflow-hidden">
@@ -606,27 +610,27 @@ export default function CaseDetailPage() {
                   AI Recovery Proposal
                 </h3>
                 <p className="text-[11px] text-[#8B929E] font-mono">
-                  Model: {latestDecision?.model_name || "Gemini 3.5 Flash"}
+                  Model: {latestAIDecision?.model_name || "Gemini"}
                 </p>
               </div>
             </div>
-            {latestDecision?.confidence && (
+            {latestAIDecision && (
               <div className="flex items-center gap-3">
                 <div className="text-right">
                   <span className="text-[10px] uppercase font-mono text-[#8B929E] block">
-                    AI Confidence
+                    Confidence
                   </span>
                   <span className="text-sm font-bold font-mono text-[#8B7CFF]">
-                    {Math.round(latestDecision.confidence * 100)}%
+                    {Math.round(latestAIDecision.confidence * 100)}%
                   </span>
                 </div>
-                {latestDecision.recovery_probability !== undefined && (
+                {latestAIDecision.recovery_probability !== undefined && (
                   <div className="text-right pl-3 border-l border-[#23262D]">
                     <span className="text-[10px] uppercase font-mono text-emerald-400 block">
                       Recovery Prob
                     </span>
                     <span className="text-sm font-bold font-mono text-emerald-400">
-                      {Math.round(latestDecision.recovery_probability * 100)}%
+                      {Math.round(latestAIDecision.recovery_probability * 100)}%
                     </span>
                   </div>
                 )}
@@ -634,26 +638,26 @@ export default function CaseDetailPage() {
             )}
           </div>
 
-          {latestDecision ? (
+          {latestAIDecision ? (
             <div className="space-y-3">
               <div className="p-3.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-[#8B929E]">Recommended Action</span>
                   <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold bg-[#8B7CFF]/20 text-[#8B7CFF] border border-[#8B7CFF]/30">
-                    {latestDecision.recommended_action}
+                    {latestAIDecision.recommended_action}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-[#8B929E]">Proposed Cooldown Delay</span>
+                  <span className="text-[#8B929E]">Proposed Delay</span>
                   <span className="text-[#F5F7FA] font-medium">
-                    {latestDecision.delay_minutes} minutes
+                    {latestAIDecision.delay_minutes} minutes
                   </span>
                 </div>
-                {latestDecision.expected_recovery_value !== undefined && (
+                {latestAIDecision.expected_recovery_value !== undefined && (
                   <div className="flex items-center justify-between text-xs font-mono pt-1 border-t border-[#191D26]">
                     <span className="text-[#8B929E]">Expected Net Value (EV)</span>
                     <span className="text-emerald-400 font-bold">
-                      {formatCurrency(latestDecision.expected_recovery_value)}
+                      {formatCurrency(latestAIDecision.expected_recovery_value)}
                     </span>
                   </div>
                 )}
@@ -661,17 +665,17 @@ export default function CaseDetailPage() {
 
               <div>
                 <span className="text-xs font-semibold text-[#F5F7FA] block mb-1">
-                  Diagnosis & Explanatory Summary
+                  Diagnosis
                 </span>
                 <p className="text-xs text-[#C1C7D0] leading-relaxed p-3 rounded-lg bg-[#090C12] border border-[#191D26]">
-                  {latestDecision.diagnosis}
+                  {latestAIDecision.diagnosis}
                 </p>
               </div>
 
-              {latestDecision.reason && (
+              {latestAIDecision.reason && (
                 <div className="text-xs text-[#8B929E] space-y-1">
-                  <span className="font-semibold text-[#F5F7FA]">Merchant Explanation:</span>
-                  <p className="text-xs text-[#8B929E]">{latestDecision.reason}</p>
+                  <span className="font-semibold text-[#F5F7FA]">Reasoning:</span>
+                  <p className="text-xs text-[#8B929E]">{latestAIDecision.reason}</p>
                 </div>
               )}
             </div>
@@ -691,10 +695,10 @@ export default function CaseDetailPage() {
               </span>
               <div>
                 <h3 className="text-sm font-semibold text-[#F5F7FA]">
-                  Policy Engine Guardrail Interceptor
+                  Policy Engine Gate
                 </h3>
                 <p className="text-[11px] text-[#8B929E] font-mono">
-                  Deterministic Safety Boundary
+                  Deterministic Merchant Guardrails
                 </p>
               </div>
             </div>
@@ -704,7 +708,7 @@ export default function CaseDetailPage() {
                   ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
                   : policyDecisionLabel === "BLOCKED"
                   ? "bg-red-500/15 text-red-400 border-red-500/30"
-                  : "bg-orange-500/15 text-orange-400 border-orange-500/30"
+                  : "bg-amber-500/15 text-amber-400 border-amber-500/30"
               }`}
             >
               {policyDecisionLabel}
@@ -712,65 +716,88 @@ export default function CaseDetailPage() {
           </div>
 
           <div className="space-y-3">
-            {/* Guardrail Rules Checklist */}
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#121722] border border-[#23262D]">
-                <span className="text-[#C1C7D0]">Max Retry Limit (≤ 2 attempts)</span>
-                <span
-                  className={`font-mono font-semibold ${
-                    caseItem.retry_count <= 2 ? "text-emerald-400" : "text-red-400"
-                  }`}
-                >
-                  {caseItem.retry_count <= 2 ? "✓ Passed" : "✗ Exceeded"}
+            <div className="p-3.5 rounded-lg bg-[#121722] border border-[#23262D] space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[#8B929E]">Policy Rule:</span>
+                <span className="font-mono font-semibold text-amber-300">
+                  {policyRule}
                 </span>
               </div>
-
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#121722] border border-[#23262D]">
-                <span className="text-[#C1C7D0]">Max Automated Amount (≤ ₹25,000)</span>
-                <span
-                  className={`font-mono font-semibold ${
-                    caseItem.amount_at_risk <= 25000
-                      ? "text-emerald-400"
-                      : "text-orange-400"
-                  }`}
-                >
-                  {caseItem.amount_at_risk <= 25000
-                    ? "✓ Passed"
-                    : "⚠ Exceeded (> ₹25k)"}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#121722] border border-[#23262D]">
-                <span className="text-[#C1C7D0]">Subscription Active Check</span>
-                <span
-                  className={`font-mono font-semibold ${
-                    !isCancelled ? "text-emerald-400" : "text-red-400"
-                  }`}
-                >
-                  {!isCancelled ? "✓ Active" : "✗ Cancelled by User"}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#121722] border border-[#23262D]">
-                <span className="text-[#C1C7D0]">Minimum Retry Interval (≥ 30 min)</span>
-                <span className="font-mono text-emerald-400 font-semibold">
-                  ✓ Enforced
+              <div className="flex items-center justify-between">
+                <span className="text-[#8B929E]">Authorized Final Action:</span>
+                <span className="font-mono font-bold text-emerald-400">
+                  {finalAction}
                 </span>
               </div>
             </div>
 
-            {/* Verdict Explanation Box */}
-            <div className="p-3 rounded-lg bg-[#090C12] border border-[#191D26] text-xs">
-              <span className="font-semibold text-[#8B929E] block mb-1 font-mono">
-                Policy Interceptor Verdict:
+            {/* Exact Policy Reason from Backend */}
+            <div className="p-3.5 rounded-lg bg-[#090C12] border border-[#191D26] text-xs space-y-1">
+              <span className="font-semibold text-[#8B929E] block font-mono">
+                Policy Enforcement Rationale:
               </span>
-              <p className="text-[#F5F7FA]">{policyOverrideReason}</p>
+              <p className="text-[#F5F7FA] leading-relaxed">
+                {policyReason}
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Durable Workflow & Chronological Audit Timeline */}
+      {/* Candidate Actions & Evaluated EV Table */}
+      {candidateActions && candidateActions.length > 0 && (
+        <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-3">
+          <div className="flex items-center gap-2">
+            <Scale className="w-4 h-4 text-emerald-400" />
+            <h3 className="text-sm font-semibold text-[#F5F7FA]">
+              Evaluated Candidate Actions & Net Recovery Value (EV)
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="border-b border-[#23262D] text-[#8B929E] font-mono text-[11px]">
+                  <th className="pb-2">Action</th>
+                  <th className="pb-2 text-right">Recovery Probability</th>
+                  <th className="pb-2 text-right">Expected Net Value</th>
+                  <th className="pb-2 text-center">Customer Friction</th>
+                  <th className="pb-2 text-right">Estimated Cost</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#191D26] font-mono">
+                {candidateActions.map((cAct: any, i: number) => {
+                  const actionName = cAct.action || cAct.action_type || "ACTION";
+                  const isWinner = i === 0;
+                  return (
+                    <tr key={i} className={isWinner ? "bg-emerald-500/10 text-[#F5F7FA]" : "text-[#8B929E]"}>
+                      <td className="py-2.5 font-semibold text-[#F5F7FA] flex items-center gap-1.5">
+                        {isWinner && <Sparkles className="w-3.5 h-3.5 text-emerald-400" />}
+                        {actionName}
+                      </td>
+                      <td className="py-2.5 text-right font-bold text-emerald-400">
+                        {Math.round(cAct.recovery_probability * 100)}%
+                      </td>
+                      <td className="py-2.5 text-right text-emerald-400 font-bold">
+                        {formatCurrency(cAct.expected_recovery_value)}
+                      </td>
+                      <td className="py-2.5 text-center">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-[#161C2A] text-[#8B929E] border border-[#23262D]">
+                          {cAct.customer_friction || "LOW"}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-right">
+                        {formatCurrency(cAct.estimated_cost || 0)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Chronological Audit & Executed Actions Timeline */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Executed Recovery Actions */}
         <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4">
@@ -780,13 +807,13 @@ export default function CaseDetailPage() {
               Executed Actions Log
             </h3>
             <span className="text-xs font-mono text-[#8B929E]">
-              {caseItem.recovery_actions?.length || 0} actions recorded
+              {caseItem.recovery_actions?.length || 0} recorded
             </span>
           </div>
 
           {caseItem.recovery_actions?.length === 0 ? (
             <div className="py-8 text-center text-xs text-[#8B929E] border border-dashed border-[#23262D] rounded-lg">
-              No actions executed yet. Use the Operator Console above to trigger actions.
+              No actions executed yet. Use the Operator Console above to dispatch actions.
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -799,26 +826,16 @@ export default function CaseDetailPage() {
                     <span className="font-mono font-semibold text-[#F5F7FA]">
                       Attempt #{act.attempt_number} · {act.action_type}
                     </span>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-mono ${
-                        act.status === "captured" || act.status === "success"
-                          ? "bg-emerald-500/20 text-emerald-400"
-                          : "bg-[#161C2A] text-sky-400"
-                      }`}
-                    >
+                    <span className="text-[10px] font-mono text-emerald-400 uppercase bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
                       {act.status}
                     </span>
                   </div>
                   {act.result_summary && (
                     <p className="text-xs text-[#C1C7D0]">{act.result_summary}</p>
                   )}
-                  {act.external_reference && (
-                    <div className="text-[11px] font-mono text-[#8B929E]">
-                      Ref: {act.external_reference}
-                    </div>
-                  )}
-                  <div className="text-[10px] font-mono text-[#8B929E] text-right">
-                    {formatDate(act.executed_at)}
+                  <div className="flex items-center justify-between text-[11px] font-mono text-[#8B929E] pt-1">
+                    <span>Ref: {act.external_reference || "N/A"}</span>
+                    <span>{formatRelativeTime(act.executed_at)}</span>
                   </div>
                 </div>
               ))}
@@ -826,12 +843,12 @@ export default function CaseDetailPage() {
           )}
         </div>
 
-        {/* Audit Timeline */}
+        {/* Audit Log Stream */}
         <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[#F5F7FA] flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#8B7CFF]" />
-              Durable Audit Timeline
+              <FileCode className="w-4 h-4 text-[#8B7CFF]" />
+              Immutable Audit Events
             </h3>
             <span className="text-xs font-mono text-[#8B929E]">
               {caseItem.audit_logs?.length || 0} events
@@ -840,56 +857,36 @@ export default function CaseDetailPage() {
 
           {caseItem.audit_logs?.length === 0 ? (
             <div className="py-8 text-center text-xs text-[#8B929E] border border-dashed border-[#23262D] rounded-lg">
-              No audit logs captured.
+              No audit records available.
             </div>
           ) : (
-            <div className="space-y-3 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-[#23262D]">
+            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
               {caseItem.audit_logs?.map((log) => (
-                <div key={log.id} className="flex items-start gap-3 relative pl-8">
-                  <div className="w-2.5 h-2.5 rounded-full bg-[#8B7CFF] absolute left-2.5 top-1.5 -translate-x-1/2 ring-4 ring-[#0D1017]" />
-                  <div className="flex-1 p-2.5 rounded-lg bg-[#121722] border border-[#23262D]">
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="font-mono font-semibold text-[#F5F7FA]">
-                        {log.event_type}
-                      </span>
-                      <span className="text-[10px] font-mono text-[#8B929E]">
-                        {formatDate(log.created_at)}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-[#8B929E] font-mono">
-                      Actor: {log.actor}
-                    </div>
+                <div
+                  key={log.id}
+                  className="p-3 rounded-lg bg-[#121722] border border-[#23262D] space-y-1"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono font-semibold text-[#8B7CFF]">
+                      {log.event_type}
+                    </span>
+                    <span className="text-[10px] font-mono text-[#8B929E]">
+                      {formatRelativeTime(log.created_at)}
+                    </span>
                   </div>
+                  <div className="text-xs text-[#8B929E] flex items-center gap-2">
+                    <span>Actor: {log.actor}</span>
+                  </div>
+                  {log.payload && (
+                    <pre className="mt-1 p-2 rounded bg-black text-[10px] font-mono text-emerald-400 overflow-x-auto">
+                      {JSON.stringify(log.payload, null, 2)}
+                    </pre>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
-      </div>
-
-      {/* Collapsible Raw JSON Data Inspector */}
-      <div className="rounded-xl bg-[#0D1017] border border-[#23262D] overflow-hidden">
-        <button
-          onClick={() => setIsRawJsonOpen(!isRawJsonOpen)}
-          className="w-full flex items-center justify-between p-4 text-xs font-mono text-[#8B929E] hover:text-[#F5F7FA] hover:bg-[#121722] transition-colors cursor-pointer"
-        >
-          <span className="flex items-center gap-2">
-            <FileCode className="w-4 h-4 text-[#38BDF8]" />
-            Inspect Raw Database & Event Payload
-          </span>
-          {isRawJsonOpen ? (
-            <ChevronUp className="w-4 h-4" />
-          ) : (
-            <ChevronDown className="w-4 h-4" />
-          )}
-        </button>
-        {isRawJsonOpen && (
-          <div className="p-4 border-t border-[#23262D] bg-[#090C12]">
-            <pre className="p-3 rounded-lg bg-black text-[11px] font-mono text-[#38BDF8] overflow-x-auto max-h-96">
-              {JSON.stringify(caseItem, null, 2)}
-            </pre>
-          </div>
-        )}
       </div>
     </div>
   );

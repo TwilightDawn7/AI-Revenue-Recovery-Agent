@@ -8,7 +8,7 @@ load_dotenv()
 # Enable local Inngest development mode
 os.environ["INNGEST_DEV"] = "1"
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -33,7 +33,7 @@ def get_db_session() -> Session:
     fn_id="payment-recovery-workflow",
     trigger=inngest.TriggerEvent(event="recovery/payment.failed"),
 )
-async def payment_recovery_workflow(ctx: inngest.Context) -> str:
+async def payment_recovery_workflow(ctx: inngest.Context, step: inngest.Step) -> str:
     """
     Main event-driven recovery workflow.
     Executes context gathering, AI reasoning, deterministic policy validation,
@@ -121,7 +121,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
         finally:
             db.close()
 
-    ai_result = await ctx.step.run("ai-diagnosis", run_ai_step)
+    ai_result = await step.run("ai-diagnosis", run_ai_step)
     if "error" in ai_result:
         return f"Error: {ai_result['error']}"
 
@@ -186,7 +186,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
         finally:
             db.close()
 
-    policy_result = await ctx.step.run("policy-evaluation", evaluate_policy_step)
+    policy_result = await step.run("policy-evaluation", evaluate_policy_step)
 
     action = policy_result.get("overridden_action") or ai_decision["action"]
     delay_minutes = policy_result.get("overridden_delay_minutes") if policy_result.get("overridden_delay_minutes") is not None else ai_decision["delay_minutes"]
@@ -209,7 +209,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 return "STOPPED"
             finally:
                 db.close()
-        return await ctx.step.run("stop-recovery", stop_case)
+        return await step.run("stop-recovery", stop_case)
 
     elif action == "ESCALATE_HUMAN":
         async def escalate_case() -> str:
@@ -228,7 +228,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                 return "ESCALATED"
             finally:
                 db.close()
-        return await ctx.step.run("escalate-recovery", escalate_case)
+        return await step.run("escalate-recovery", escalate_case)
 
     elif action in ["RETRY_LATER", "RETRY_PAYMENT", "RETRY_NOW"]:
         if delay_minutes > 0:
@@ -248,10 +248,10 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
                     return "SCHEDULED"
                 finally:
                     db.close()
-            await ctx.step.run("transition-to-scheduled", schedule_delay)
+            await step.run("transition-to-scheduled", schedule_delay)
             
             # Durable sleep
-            await ctx.step.sleep("retry-delay", f"{delay_minutes}m")
+            await step.sleep("retry-delay", timedelta(minutes=delay_minutes))
 
         # Pre-Execution Safety Check & Razorpay Execution
         async def execute_retry() -> dict:
@@ -300,16 +300,16 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
             finally:
                 db.close()
 
-        retry_res = await ctx.step.run("execute-payment-retry", execute_retry)
+        retry_res = await step.run("execute-payment-retry", execute_retry)
         if retry_res.get("aborted"):
             return "RECOVERED"
 
         # Wait for Razorpay capture webhook
-        webhook_event = await ctx.step.wait_for_event(
+        webhook_event = await step.wait_for_event(
             "wait-for-charge-webhook",
             event="razorpay/payment.captured",
-            timeout="1h",
-            if_=f"async.data.payment_id == '{payment_id}'"
+            timeout=timedelta(hours=1),
+            if_exp=f"async.data.payment_id == '{payment_id}'"
         )
         
         async def process_webhook_result() -> str:
@@ -336,7 +336,7 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
             finally:
                 db.close()
                 
-        return await ctx.step.run("finalize-retry-case", process_webhook_result)
+        return await step.run("finalize-retry-case", process_webhook_result)
 
     elif action in ["REQUEST_PAYMENT_UPDATE", "PAYMENT_UPDATE"]:
         async def execute_link_creation() -> dict:
@@ -382,15 +382,15 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
             finally:
                 db.close()
 
-        link_res = await ctx.step.run("create-payment-update-link", execute_link_creation)
+        link_res = await step.run("create-payment-update-link", execute_link_creation)
         payment_link_id = link_res.get("payment_link_id")
 
         # Wait for customer to complete payment
-        payment_event = await ctx.step.wait_for_event(
+        payment_event = await step.wait_for_event(
             "wait-for-customer-payment",
             event="razorpay/payment.captured",
-            timeout="3d",
-            if_=f"async.data.payment_link_id == '{payment_link_id}'"
+            timeout=timedelta(days=3),
+            if_exp=f"async.data.payment_link_id == '{payment_link_id}'"
         )
         
         async def finalize_link_case() -> str:
@@ -417,6 +417,6 @@ async def payment_recovery_workflow(ctx: inngest.Context) -> str:
             finally:
                 db.close()
 
-        return await ctx.step.run("finalize-link-case", finalize_link_case)
+        return await step.run("finalize-link-case", finalize_link_case)
         
     return "UNKNOWN_ACTION"

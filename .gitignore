@@ -87,7 +87,18 @@ Thumbs.db
 
 # Local task specs & diagnostics
 AI Revenue Recovery Agent.md
+*Plan.md
+*plan.md
+*Implementation*.md
+*Refinement*.md
 check_keys.py
 diagnose_keys.py
 check_*.py
 diagnose_*.py
+eval_cache.json
+*.zip
+favicon/
+*.jpg
+*.png
+!frontend/public/**
+!frontend/src/**

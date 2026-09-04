@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { Terminal, Shield, Zap, Sparkles } from "lucide-react";
+import { Terminal, Zap, Sparkles } from "lucide-react";
 
 export function ExecutiveHeader() {
   return (

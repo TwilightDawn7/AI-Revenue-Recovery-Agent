@@ -25,7 +25,7 @@ export default function DashboardPage() {
 
       <AIVsPolicyShowcase />
 
-      <RecoveryFunnel metrics={metrics} cases={cases} />
+      <RecoveryFunnel metrics={metrics} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <RecoveryBreakdown metrics={metrics} cases={cases} />

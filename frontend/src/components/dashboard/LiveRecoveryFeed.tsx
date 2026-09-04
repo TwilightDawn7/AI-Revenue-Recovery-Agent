@@ -6,13 +6,7 @@ import { RecoveryCase } from "@/types";
 import { formatCurrency, formatRelativeTime } from "@/lib/formatters";
 import {
   Activity,
-  CheckCircle2,
-  Sparkles,
-  ShieldAlert,
   ArrowRight,
-  Clock,
-  RotateCcw,
-  Zap,
 } from "lucide-react";
 
 interface LiveRecoveryFeedProps {
@@ -60,7 +54,7 @@ export function LiveRecoveryFeed({ cases }: LiveRecoveryFeedProps) {
           time: d.created_at,
           type: "AI_DECISION",
           title: `AI: ${d.recommended_action.replace(/_/g, " ")}`,
-          detail: `${Math.round(d.confidence * 100)}% confidence · ${d.diagnosis.slice(0, 60)}...`,
+          detail: `${Math.round((d.confidence || 0.85) * 100)}% confidence · ${d.diagnosis.slice(0, 60)}...`,
           color: "text-[#8B7CFF] bg-[#8B7CFF]/10 border-[#8B7CFF]/20",
         });
       });

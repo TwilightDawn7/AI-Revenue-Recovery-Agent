@@ -32,16 +32,21 @@ export type PolicyDecision =
 export interface Customer {
   id: string;
   name: string;
-  email: string;
+  email?: string;
+  segment?: string;
+  lifetime_value?: number;
+  successful_renewals?: number;
 }
 
 export interface EvaluatedAction {
-  action_type: RecoveryActionType;
+  action?: RecoveryActionType | string;
+  action_type?: RecoveryActionType | string;
   recovery_probability: number;
   expected_recovery_value: number;
-  customer_friction: "LOW" | "MEDIUM" | "HIGH";
-  estimated_cost: number;
-  reason: string;
+  customer_friction?: "LOW" | "MEDIUM" | "HIGH" | string;
+  estimated_cost?: number;
+  reason?: string;
+  rank?: number;
 }
 
 export interface AIDecision {
@@ -79,7 +84,7 @@ export interface RecoveryDecision {
 
 export interface RecoveryAction {
   id: number;
-  action_type: RecoveryActionType;
+  action_type: RecoveryActionType | string;
   attempt_number: number;
   status: string;
   external_reference?: string | null;
@@ -107,14 +112,17 @@ export interface RecoveryCase {
   subscription_id?: string | null;
   problem_type: string;
   amount_at_risk: number;
+  currency?: string;
   status: CaseStatus;
   retry_count: number;
   recovery_window_started_at: string;
+  recovery_window_ended_at?: string | null;
   recovered_amount: number;
   created_at: string;
   updated_at: string;
   customer: Customer;
   ai_decisions: AIDecision[];
+  recovery_decisions?: RecoveryDecision[];
   recovery_actions: RecoveryAction[];
   audit_logs: AuditLog[];
 }
@@ -156,6 +164,75 @@ export interface WebhookSimulationResponse {
   case_id?: number;
   action?: string;
   reason?: string;
+  [key: string]: any;
+}
+
+export interface MerchantPolicy {
+  id?: number;
+  merchant_id?: number;
+  max_retries: number;
+  min_retry_interval_minutes: number;
+  max_autonomous_amount: number;
+  high_value_action: string;
+  policy_version: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TestPolicyRequest {
+  policy: {
+    max_retries: number;
+    min_retry_interval_minutes: number;
+    max_autonomous_amount: number;
+    high_value_action: string;
+  };
+  scenario: Record<string, any>;
+}
+
+export interface TestPolicyResponse {
+  allowed: boolean;
+  decision: string;
+  rule_triggered?: string | null;
+  reason: string;
+  final_action: string;
+  delay_minutes: number;
+}
+
+export type TestPolicyResult = TestPolicyResponse;
+
+export interface BenchmarkRow {
+  strategy: string;
+  total_cases: number;
+  revenue_at_risk: number;
+  recovered_revenue: number;
+  recovery_rate: number;
+  recovered_cases: number;
+  escalated_cases: number;
+  stopped_cases: number;
+  attempts_sent: number;
+  policy_violations: number;
+  wasted_retries: number;
+}
+
+export interface AblationRow {
+  configuration: string;
+  strategy?: string;
+  total_cases?: number;
+  revenue_at_risk?: number;
+  recovered_revenue: number;
+  recovery_rate: number;
+  recovered_cases?: number;
+  escalated_cases: number;
+  stopped_cases?: number;
+  attempts_sent: number;
+  policy_violations?: number;
+  wasted_retries?: number;
+}
+
+export interface EvaluationPayload {
+  benchmark_1000_cases: BenchmarkRow[];
+  ablation_study: AblationRow[];
+  benchmark_100_cases_dev: BenchmarkRow[];
 }
 
 export interface EvaluationSummary {
@@ -182,7 +259,7 @@ export interface EvaluationSummary {
     recovery_rate_diff: number;
     retries_saved: number;
   };
-  category_breakdown: Array<{
+  category_breakdown?: Array<{
     reason?: string;
     description?: string;
     total_cases?: number;
@@ -198,4 +275,5 @@ export interface EvaluationSummary {
     recovery_lift?: number;
   }>;
 }
+
 

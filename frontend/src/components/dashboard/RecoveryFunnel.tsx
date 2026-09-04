@@ -2,24 +2,16 @@
 
 import React from "react";
 import Link from "next/link";
-import { DashboardMetrics, RecoveryCase } from "@/types";
-import { formatCurrency, formatPercent } from "@/lib/formatters";
+import { DashboardMetrics } from "@/types";
 import {
   ArrowRight,
-  Sparkles,
-  ShieldCheck,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
-  Link2,
 } from "lucide-react";
 
 interface RecoveryFunnelProps {
   metrics?: DashboardMetrics;
-  cases?: RecoveryCase[];
 }
 
-export function RecoveryFunnel({ metrics, cases }: RecoveryFunnelProps) {
+export function RecoveryFunnel({ metrics }: RecoveryFunnelProps) {
   const total = metrics?.cases_processed || 0;
   const recovered = metrics?.successful_recoveries || 0;
   const escalated = metrics?.escalations || 0;

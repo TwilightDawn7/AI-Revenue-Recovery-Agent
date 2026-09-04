@@ -5,11 +5,10 @@ import Link from "next/link";
 import { RecoveryCase } from "@/types";
 import {
   formatCurrency,
-  formatDate,
   getStatusStyle,
   getActionStyle,
 } from "@/lib/formatters";
-import { ArrowRight, ShieldAlert, Sparkles, ExternalLink } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
 
 interface CasesOverviewProps {
   cases?: RecoveryCase[];
@@ -72,6 +71,10 @@ export function CasesOverview({ cases, isLoading }: CasesOverviewProps) {
                   ? getActionStyle(latestDecision.recommended_action)
                   : null;
 
+                const customerSegment =
+                  c.customer?.segment ||
+                  (c.amount_at_risk > 25000 ? "HIGH VALUE" : "ACTIVE SUBSCRIBER");
+
                 return (
                   <tr
                     key={c.id}
@@ -84,8 +87,8 @@ export function CasesOverview({ cases, isLoading }: CasesOverviewProps) {
                       <div className="font-medium text-[#F5F7FA]">
                         {c.customer?.name || "Customer"}
                       </div>
-                      <div className="text-[11px] text-[#8B929E] font-mono truncate max-w-[160px]">
-                        {c.customer?.email}
+                      <div className="text-[10px] font-mono text-[#8B7CFF] uppercase truncate max-w-[160px]">
+                        {customerSegment}
                       </div>
                     </td>
                     <td className="py-3 px-3 text-right font-mono font-semibold text-[#F5F7FA] tabular-nums">
@@ -93,12 +96,19 @@ export function CasesOverview({ cases, isLoading }: CasesOverviewProps) {
                     </td>
                     <td className="py-3 px-3">
                       {actionStyle ? (
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border ${actionStyle.badgeBg} ${actionStyle.badgeText} ${actionStyle.border}`}
-                        >
-                          <Sparkles className="w-3 h-3" />
-                          {actionStyle.label}
-                        </span>
+                        <div className="space-y-0.5">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border ${actionStyle.badgeBg} ${actionStyle.badgeText} ${actionStyle.border}`}
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            {actionStyle.label}
+                          </span>
+                          {latestDecision?.recovery_probability !== undefined && (
+                            <div className="text-[10px] font-mono text-emerald-400">
+                              {Math.round(latestDecision.recovery_probability * 100)}% prob
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-[#8B929E] text-[11px] font-mono">
                           Evaluating...

@@ -235,7 +235,7 @@ async def get_ai_decision(context: dict, use_cache: bool = True) -> AIDecisionSc
         }}
         """
         
-        model = genai.GenerativeModel("gemini-3.6-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(
             prompt,
             generation_config=genai.GenerationConfig(
@@ -263,7 +263,7 @@ async def get_ai_decision(context: dict, use_cache: bool = True) -> AIDecisionSc
         
         rec_prob = float(data.get("recovery_probability", selected_cand.recovery_probability))
         conf = float(data.get("confidence", 0.85))
-        ev = round(rec_prob * float(amount) - selected_cand.estimated_cost - selected_cand.friction_penalty, 2)
+        ev = selected_cand.expected_recovery_value
         
         decision = AIDecisionSchema(
             diagnosis=data.get("diagnosis", f"Diagnosed as {failure_cat}"),

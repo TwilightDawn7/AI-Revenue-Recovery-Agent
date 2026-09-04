@@ -1,3 +1,5 @@
+import os
+import json
 import logging
 import hmac
 import hashlib
@@ -21,7 +23,7 @@ from app.schemas.schemas import (
 from app.workflows.recovery import inngest_client, payment_recovery_workflow
 from app.services.razorpay.client import razorpay_client
 from app.services.policy.engine import evaluate_policy
-from app.services.ai.agent import get_fallback_decision
+from app.services.ai.agent import get_fallback_decision, get_ai_decision
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
@@ -285,6 +287,7 @@ def health():
 
 
 @app.get("/api/metrics", response_model=DashboardMetrics)
+@app.get("/api/dashboard/metrics", response_model=DashboardMetrics)
 def get_dashboard_metrics(db: Session = Depends(get_db)):
     """
     Calculate high-level recovery metrics and grounded attribution analytics.
@@ -664,6 +667,7 @@ async def real_webhook_endpoint(
 # Policy Studio Endpoints (Phase 6)
 # ==========================================
 @app.get("/api/policies", response_model=MerchantPolicyResponse)
+@app.get("/api/policies/current", response_model=MerchantPolicyResponse)
 def get_merchant_policy(db: Session = Depends(get_db)):
     """
     Get active merchant policy boundaries and version.
@@ -920,7 +924,7 @@ async def run_showcase_pipeline(request: Request, db: Session = Depends(get_db))
             "expected_recovery_value": ai_decision.expected_recovery_value,
             "proposed_delay_minutes": ai_decision.delay_minutes,
             "reason": ai_decision.reason,
-            "model_name": "Gemini 3.5 Flash",
+            "model_name": getattr(settings, "GEMINI_MODEL", "Gemini"),
             "candidate_actions": [a.model_dump() for a in ai_decision.actions]
         },
         "policy_interceptor": {

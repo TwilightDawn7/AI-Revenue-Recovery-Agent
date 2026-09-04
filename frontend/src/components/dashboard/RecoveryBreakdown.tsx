@@ -2,13 +2,11 @@
 
 import React from "react";
 import { DashboardMetrics, RecoveryCase } from "@/types";
-import { formatCurrency, formatPercent } from "@/lib/formatters";
 import {
   RotateCcw,
   Link2,
   UserCheck,
   Ban,
-  TrendingUp,
   ShieldCheck,
 } from "lucide-react";
 
@@ -23,13 +21,13 @@ export function RecoveryBreakdown({ metrics, cases }: RecoveryBreakdownProps) {
 
   const retryCases =
     cases?.filter((c) =>
-      c.ai_decisions?.some((d) => d.recommended_action === "RETRY_PAYMENT")
+      c.ai_decisions?.some((d) => d.recommended_action === "RETRY_PAYMENT" || d.recommended_action === "RETRY_LATER")
     ).length || 0;
 
   const linkCases =
     cases?.filter((c) =>
       c.ai_decisions?.some(
-        (d) => d.recommended_action === "REQUEST_PAYMENT_UPDATE"
+        (d) => d.recommended_action === "REQUEST_PAYMENT_UPDATE" || d.recommended_action === "PAYMENT_UPDATE"
       )
     ).length || 0;
 

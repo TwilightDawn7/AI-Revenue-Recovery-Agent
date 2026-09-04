@@ -1,14 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import {
   Search,
   Zap,
   Menu,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
   ShieldCheck,
   RefreshCw,
 } from "lucide-react";
@@ -17,21 +14,13 @@ import { useQueryClient } from "@tanstack/react-query";
 
 interface TopbarProps {
   onToggleSidebar: () => void;
-  isSidebarOpen: boolean;
+  isSidebarOpen?: boolean;
 }
 
-export function Topbar({ onToggleSidebar, isSidebarOpen }: TopbarProps) {
-  const { data: health, isError, isLoading, refetch } = useHealth();
+export function Topbar({ onToggleSidebar }: TopbarProps) {
+  const { data: health, isError, isLoading } = useHealth();
   const queryClient = useQueryClient();
-  const [lastSync, setLastSync] = useState("Just now");
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setLastSync("Just now");
-    }, 15000);
-    return () => clearInterval(timer);
-  }, []);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -46,7 +35,7 @@ export function Topbar({ onToggleSidebar, isSidebarOpen }: TopbarProps) {
       <div className="flex items-center gap-3">
         <button
           onClick={onToggleSidebar}
-          className="p-1.5 rounded-md text-[#8B929E] hover:text-[#F5F7FA] hover:bg-[#161C2A] transition-colors focus:outline-hidden"
+          className="p-1.5 rounded-md text-[#8B929E] hover:text-[#F5F7FA] hover:bg-[#161C2A] transition-colors focus:outline-hidden cursor-pointer"
           aria-label="Toggle Sidebar"
         >
           <Menu className="w-5 h-5" />
@@ -62,7 +51,7 @@ export function Topbar({ onToggleSidebar, isSidebarOpen }: TopbarProps) {
             });
             document.dispatchEvent(event);
           }}
-          className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1017] border border-[#23262D] text-xs text-[#8B929E] hover:border-[#353B47] hover:text-[#F5F7FA] transition-colors min-w-[220px]"
+          className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0D1017] border border-[#23262D] text-xs text-[#8B929E] hover:border-[#353B47] hover:text-[#F5F7FA] transition-colors min-w-[220px] cursor-pointer"
         >
           <Search className="w-3.5 h-3.5" />
           <span>Search or jump to...</span>
@@ -104,7 +93,7 @@ export function Topbar({ onToggleSidebar, isSidebarOpen }: TopbarProps) {
         {/* Refresh All Queries Button */}
         <button
           onClick={handleManualRefresh}
-          className="p-1.5 rounded-md text-[#8B929E] hover:text-[#F5F7FA] hover:bg-[#161C2A] border border-transparent hover:border-[#23262D] transition-all"
+          className="p-1.5 rounded-md text-[#8B929E] hover:text-[#F5F7FA] hover:bg-[#161C2A] border border-transparent hover:border-[#23262D] transition-all cursor-pointer"
           title="Refresh real-time data"
         >
           <RefreshCw

@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
@@ -10,8 +11,8 @@ import {
   Terminal,
   BarChart3,
   Cpu,
-  RefreshCw,
-  SlidersHorizontal,
+  Sliders,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCases } from "@/hooks/use-cases";
@@ -48,7 +49,7 @@ export function Sidebar({ isOpen }: SidebarProps) {
           name: "Recovery Cases",
           href: "/cases",
           icon: ShieldAlert,
-          badge: activeCasesCount > 0 ? activeCasesCount : null,
+          badge: activeCasesCount > 0 ? `${activeCasesCount}` : null,
           badgeColor: "bg-[#8B7CFF]/20 text-[#8B7CFF] border border-[#8B7CFF]/30",
         },
       ],
@@ -67,8 +68,15 @@ export function Sidebar({ isOpen }: SidebarProps) {
           name: "Recovery Simulator",
           href: "/simulator",
           icon: Terminal,
-          badge: "Demo",
+          badge: "Simulator",
           badgeColor: "bg-amber-500/15 text-amber-400 border border-amber-500/25",
+        },
+        {
+          name: "Policy Studio",
+          href: "/settings",
+          icon: Sliders,
+          badge: "Guardrails",
+          badgeColor: "bg-sky-500/15 text-sky-400 border border-sky-500/25",
         },
       ],
     },
@@ -79,7 +87,7 @@ export function Sidebar({ isOpen }: SidebarProps) {
           name: "Evaluation & ROI",
           href: "/evaluation",
           icon: BarChart3,
-          badge: "+54.6pp",
+          badge: "1k Cases",
           badgeColor: "bg-[#8B7CFF]/15 text-[#8B7CFF] border border-[#8B7CFF]/25",
         },
       ],
@@ -95,9 +103,16 @@ export function Sidebar({ isOpen }: SidebarProps) {
     >
       {/* Brand & Identity */}
       <div className="flex items-center justify-between h-16 px-4 border-b border-[#23262D]">
-        <Link href="/" className="flex items-center gap-3 overflow-hidden">
-          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-[#8B7CFF] to-[#6366F1] text-white font-bold shadow-md shadow-[#8B7CFF]/20 shrink-0">
-            <Cpu className="w-4 h-4" />
+        <Link href="/" className="flex items-center gap-3 overflow-hidden group">
+          <div className="relative flex items-center justify-center w-8 h-8 rounded-lg overflow-hidden border border-[#8B7CFF]/30 shadow-md shadow-[#8B7CFF]/20 shrink-0 bg-[#161C2A] group-hover:border-[#8B7CFF]/60 transition-all p-1">
+            <Image
+              src="/favicon.svg"
+              alt="RevRecover AI Logo"
+              width={24}
+              height={24}
+              className="w-full h-full object-contain"
+              priority
+            />
           </div>
           {isOpen && (
             <div className="flex flex-col min-w-0">
@@ -135,7 +150,7 @@ export function Sidebar({ isOpen }: SidebarProps) {
                   className={cn(
                     "flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-all group relative",
                     isActive
-                      ? "bg-[#161C2A] text-[#F5F7FA] border border-[#23262D] shadow-xs"
+                      ? "bg-[#161C2A] text-[#F5F7FA] border border-[#23262D] shadow-xs font-semibold"
                       : "text-[#8B929E] hover:text-[#F5F7FA] hover:bg-[#121722]"
                   )}
                   title={!isOpen ? item.name : undefined}
@@ -185,9 +200,10 @@ export function Sidebar({ isOpen }: SidebarProps) {
               </span>
             </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-[#8B929E]">Reasoning Model</span>
-              <span className="font-mono text-[#8B7CFF] text-[10px]">
-                Gemini 1.5 Flash
+              <span className="text-[#8B929E]">Reasoning Engine</span>
+              <span className="font-mono text-[#8B7CFF] text-[10px] flex items-center gap-1">
+                <Sparkles className="w-3 h-3" />
+                Gemini
               </span>
             </div>
           </div>

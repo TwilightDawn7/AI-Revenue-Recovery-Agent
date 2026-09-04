@@ -1,43 +1,22 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
-  ShieldCheck,
-  Cpu,
-  Database,
-  Layers,
-  Key,
+  fetchMerchantPolicy,
+  updateMerchantPolicy,
+  testMerchantPolicy,
+} from "@/lib/api/policies";
+import { MerchantPolicy, TestPolicyResponse } from "@/types";
+import {
   Sliders,
   Play,
   CheckCircle2,
-  AlertTriangle,
   Lock,
-  RefreshCw,
   Save,
-  Clock,
-  Sparkles,
-  Info
+  Cpu,
+  Key,
+  Layers,
 } from "lucide-react";
-
-interface MerchantPolicy {
-  id?: number;
-  merchant_id?: number;
-  max_retries: number;
-  min_retry_interval_minutes: number;
-  max_autonomous_amount: number;
-  high_value_action: string;
-  policy_version: number;
-  updated_at?: string;
-}
-
-interface TestPolicyResult {
-  allowed: boolean;
-  decision: string;
-  rule_triggered?: string;
-  reason: string;
-  final_action: string;
-  delay_minutes: number;
-}
 
 export default function PolicyStudioPage() {
   const [policy, setPolicy] = useState<MerchantPolicy>({
@@ -45,14 +24,13 @@ export default function PolicyStudioPage() {
     min_retry_interval_minutes: 30,
     max_autonomous_amount: 25000,
     high_value_action: "ESCALATE_HUMAN",
-    policy_version: 1
+    policy_version: 1,
   });
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
 
-  // Test sandbox state
+  // Test Sandbox State
   const [testAmount, setTestAmount] = useState(2499);
   const [testRetryCount, setTestRetryCount] = useState(0);
   const [testSubStatus, setTestSubStatus] = useState("active");
@@ -60,47 +38,34 @@ export default function PolicyStudioPage() {
   const [testDelay, setTestDelay] = useState(30);
 
   const [testRunning, setTestRunning] = useState(false);
-  const [testResult, setTestResult] = useState<TestPolicyResult | null>(null);
+  const [testResult, setTestResult] = useState<TestPolicyResponse | null>(null);
 
-  useEffect(() => {
-    fetchPolicy();
+  const loadPolicy = useCallback(async () => {
+    try {
+      const data = await fetchMerchantPolicy();
+      setPolicy(data);
+    } catch (e) {
+      console.error("Failed to load merchant policy:", e);
+    }
   }, []);
 
-  const fetchPolicy = async () => {
-    try {
-      setIsLoading(true);
-      const res = await fetch("http://localhost:8000/api/policies");
-      if (res.ok) {
-        const data = await res.json();
-        setPolicy(data);
-      }
-    } catch (e) {
-      console.error("Failed to load policy:", e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  useEffect(() => {
+    loadPolicy();
+  }, [loadPolicy]);
 
   const handleSavePolicy = async () => {
     try {
       setIsSaving(true);
       setSaveSuccess(false);
-      const res = await fetch("http://localhost:8000/api/policies", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          max_retries: policy.max_retries,
-          min_retry_interval_minutes: policy.min_retry_interval_minutes,
-          max_autonomous_amount: policy.max_autonomous_amount,
-          high_value_action: policy.high_value_action
-        })
+      const updated = await updateMerchantPolicy({
+        max_retries: policy.max_retries,
+        min_retry_interval_minutes: policy.min_retry_interval_minutes,
+        max_autonomous_amount: policy.max_autonomous_amount,
+        high_value_action: policy.high_value_action,
       });
-      if (res.ok) {
-        const updated = await res.json();
-        setPolicy(updated);
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 3000);
-      }
+      setPolicy(updated);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
     } catch (e) {
       console.error("Failed to save policy:", e);
     } finally {
@@ -111,31 +76,24 @@ export default function PolicyStudioPage() {
   const runTestSandbox = async () => {
     try {
       setTestRunning(true);
-      const res = await fetch("http://localhost:8000/api/policies/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          policy: {
-            max_retries: policy.max_retries,
-            min_retry_interval_minutes: policy.min_retry_interval_minutes,
-            max_autonomous_amount: policy.max_autonomous_amount,
-            high_value_action: policy.high_value_action
-          },
-          scenario: {
-            amount: testAmount,
-            retry_count: testRetryCount,
-            subscription_status: testSubStatus,
-            proposed_action: testAction,
-            delay_minutes: testDelay
-          }
-        })
+      const data = await testMerchantPolicy({
+        policy: {
+          max_retries: policy.max_retries,
+          min_retry_interval_minutes: policy.min_retry_interval_minutes,
+          max_autonomous_amount: policy.max_autonomous_amount,
+          high_value_action: policy.high_value_action,
+        },
+        scenario: {
+          amount: testAmount,
+          retry_count: testRetryCount,
+          subscription_status: testSubStatus,
+          proposed_action: testAction,
+          delay_minutes: testDelay,
+        },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setTestResult(data);
-      }
+      setTestResult(data);
     } catch (e) {
-      console.error("Policy test failed:", e);
+      console.error("Policy test sandbox failed:", e);
     } finally {
       setTestRunning(false);
     }
@@ -183,7 +141,7 @@ export default function PolicyStudioPage() {
             </span>
           </div>
           <p className="text-xs text-[#8B929E] mt-0.5">
-            Configure, version, and test immutable financial boundaries enforced on autonomous recovery actions.
+            Configure, version, and simulate immutable financial guardrails enforced on all autonomous recovery actions.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -196,7 +154,7 @@ export default function PolicyStudioPage() {
           <button
             onClick={handleSavePolicy}
             disabled={isSaving}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm cursor-pointer"
           >
             <Save className="w-3.5 h-3.5" />
             {isSaving ? "Saving Policy..." : "Save Policy"}
@@ -211,10 +169,10 @@ export default function PolicyStudioPage() {
         </div>
         <div>
           <h2 className="text-sm font-semibold text-[#F5F7FA]">
-            Deterministic Guardrail Architecture: AI Proposes. Policy Decides.
+            Deterministic Guardrail Architecture: AI Proposes. Policy Authorizes.
           </h2>
           <p className="text-xs text-[#8B929E] mt-0.5 leading-relaxed">
-            Every recovery strategy formulated by Gemini is intercepted and validated against these merchant boundaries before execution on Razorpay rails. If an AI recommendation exceeds your retry ceiling or autonomous threshold, the policy engine deterministically overrides it to human escalation or stop.
+            Every recovery strategy formulated by Gemini is intercepted and validated against these merchant boundaries before execution on Razorpay rails. If an AI recommendation exceeds your retry ceiling or autonomous amount threshold, the policy engine deterministically overrides it to human escalation or stop.
           </p>
         </div>
       </div>
@@ -249,7 +207,7 @@ export default function PolicyStudioPage() {
                 className="w-full accent-emerald-500 bg-[#121722] rounded-lg h-2"
               />
               <p className="text-[11px] text-[#8B929E]">
-                After {policy.max_retries} failed retries, automated actions cease and the case routes to Human Operations.
+                After {policy.max_retries} failed attempts, automated actions cease and the case routes to Human Operations.
               </p>
             </div>
 
@@ -271,7 +229,7 @@ export default function PolicyStudioPage() {
                 className="w-full accent-sky-500 bg-[#121722] rounded-lg h-2"
               />
               <p className="text-[11px] text-[#8B929E]">
-                Enforces durable sleep between retry attempts to allow banking rails and card networks to stabilize.
+                Enforces durable delay between retries to allow banking rails and card networks to clear temporary locks.
               </p>
             </div>
 
@@ -303,7 +261,7 @@ export default function PolicyStudioPage() {
               <select
                 value={policy.high_value_action}
                 onChange={(e) => setPolicy({ ...policy, high_value_action: e.target.value })}
-                className="w-full bg-[#121722] border border-[#23262D] rounded-lg px-3 py-2 text-xs font-mono text-[#F5F7FA] focus:outline-none focus:border-emerald-500"
+                className="w-full bg-[#121722] border border-[#23262D] rounded-lg px-3 py-2 text-xs font-mono text-[#F5F7FA] focus:outline-hidden focus:border-emerald-500"
               >
                 <option value="ESCALATE_HUMAN">ESCALATE_HUMAN (Tier-2 Operations Review)</option>
                 <option value="STOP">STOP (Halt Automated Recovery)</option>
@@ -334,28 +292,28 @@ export default function PolicyStudioPage() {
                 <button
                   type="button"
                   onClick={() => applyPreset("standard")}
-                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-[#F5F7FA] rounded border border-[#23262D] text-left transition-colors"
+                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-[#F5F7FA] rounded border border-[#23262D] text-left transition-colors cursor-pointer"
                 >
                   ₹2,499 Decline
                 </button>
                 <button
                   type="button"
                   onClick={() => applyPreset("high_value")}
-                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-amber-400 rounded border border-amber-500/20 text-left transition-colors"
+                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-amber-400 rounded border border-amber-500/20 text-left transition-colors cursor-pointer"
                 >
                   ₹48,000 High-Value
                 </button>
                 <button
                   type="button"
                   onClick={() => applyPreset("cancelled")}
-                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-rose-400 rounded border border-rose-500/20 text-left transition-colors"
+                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-rose-400 rounded border border-rose-500/20 text-left transition-colors cursor-pointer"
                 >
                   Cancelled Sub
                 </button>
                 <button
                   type="button"
                   onClick={() => applyPreset("max_retries")}
-                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-sky-400 rounded border border-sky-500/20 text-left transition-colors"
+                  className="px-2.5 py-1.5 text-[11px] font-mono bg-[#121722] hover:bg-[#1C2230] text-sky-400 rounded border border-sky-500/20 text-left transition-colors cursor-pointer"
                 >
                   Max Retries #2
                 </button>
@@ -412,10 +370,10 @@ export default function PolicyStudioPage() {
             <button
               onClick={runTestSandbox}
               disabled={testRunning}
-              className="w-full flex items-center justify-center gap-2 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors"
+              className="w-full flex items-center justify-center gap-2 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
             >
               <Play className="w-3.5 h-3.5" />
-              {testRunning ? "Evaluating..." : "Run Policy Evaluation"}
+              {testRunning ? "Evaluating Policy..." : "Run Policy Evaluation"}
             </button>
 
             {/* Test Result Display */}
@@ -467,7 +425,7 @@ export default function PolicyStudioPage() {
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           </div>
           <div className="text-[11px] font-mono text-[#8B929E]">
-            Status: Healthy (Port 8000)
+            Status: Active Guardrails (Port 8000)
           </div>
         </div>
 
@@ -482,7 +440,7 @@ export default function PolicyStudioPage() {
             </span>
           </div>
           <div className="text-[11px] font-mono text-[#8B929E]">
-            Structured Output & Safe Fallback
+            Structured Output & EV Ranking
           </div>
         </div>
 
@@ -497,7 +455,7 @@ export default function PolicyStudioPage() {
             </span>
           </div>
           <div className="text-[11px] font-mono text-[#8B929E]">
-            step.sleep & step.waitForEvent
+            Step Delays & Event Triggers
           </div>
         </div>
       </div>

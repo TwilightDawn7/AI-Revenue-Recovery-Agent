@@ -2,30 +2,52 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { triggerSimulatedWebhook } from "@/lib/api/simulator";
 import { simulatePaymentResolution } from "@/lib/api/cases";
+import { seedDemoDatabase } from "@/lib/api/showcase";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Terminal,
   Zap,
   Play,
   RotateCcw,
   Sparkles,
-  ShieldCheck,
   ShieldAlert,
   CreditCard,
   Ban,
   UserCheck,
   CheckCircle2,
-  ArrowRight,
   ExternalLink,
   Code2,
   DollarSign,
+  AlertTriangle,
 } from "lucide-react";
 
+const DEFAULT_CUSTOM_JSON = JSON.stringify(
+  {
+    event: "payment.failed",
+    id: "evt_sim_1001",
+    payload: {
+      payment: {
+        entity: {
+          id: "pay_sim_1001",
+          amount: 199900,
+          currency: "INR",
+          status: "failed",
+          error_code: "BANK_DECLINE",
+          customer_id: "cust_rahul_kumar",
+          customer_details: {
+            name: "Rahul Kumar",
+            email: "rahul.kumar@example.com",
+          },
+        },
+      },
+    },
+  },
+  null,
+  2
+);
+
 export default function SimulatorPage() {
-  const router = useRouter();
   const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState<"presets" | "custom">("presets");
@@ -35,7 +57,7 @@ export default function SimulatorPage() {
   const [lastResponse, setLastResponse] = useState<any>(null);
   const [isTriggering, setIsTriggering] = useState<string | null>(null);
 
-  // Helper to generate fresh dynamic payload
+  // Dynamic payload generator
   const createPayload = (scen: any) => {
     const timestamp = Date.now();
     const nonce = Math.random().toString(36).substring(2, 7);
@@ -62,32 +84,7 @@ export default function SimulatorPage() {
   };
 
   // Custom JSON editor state
-  const [customJson, setCustomJson] = useState(
-    JSON.stringify(
-      {
-        event: "payment.failed",
-        id: `evt_sim_${Date.now()}`,
-        payload: {
-          payment: {
-            entity: {
-              id: `pay_sim_${Math.random().toString(36).substring(2, 10)}`,
-              amount: 199900,
-              currency: "INR",
-              status: "failed",
-              error_code: "BANK_DECLINE",
-              customer_id: "cust_rahul_kumar",
-              customer_details: {
-                name: "Rahul Kumar",
-                email: "rahul.kumar@example.com",
-              },
-            },
-          },
-        },
-      },
-      null,
-      2
-    )
-  );
+  const [customJson, setCustomJson] = useState(DEFAULT_CUSTOM_JSON);
 
   const triggerScenario = async (scenarioKey: string, payload: any) => {
     setIsTriggering(scenarioKey);
@@ -126,47 +123,47 @@ export default function SimulatorPage() {
 
     const demoScenarios = [
       {
-        name: "Scenario A: Temporary Bank Decline (Rahul Kumar - ₹1,999)",
+        name: "Scenario 1: Temporary Bank Decline (Rahul Kumar - ₹1,999)",
         payload: createPayload({
-          id: "demo_a",
+          id: "demo_1",
           event: "payment.failed",
           rawAmount: 199900,
           problem: "BANK_DECLINE",
-          customerName: "Priya Sharma",
-          customerEmail: "priya.sharma@example.com",
+          customerName: "Rahul Kumar",
+          customerEmail: "rahul.kumar@example.com",
         }),
       },
       {
-        name: "Scenario B: Expired Card (Neha Sen - ₹3,499)",
+        name: "Scenario 2: Expired Card Credentials (Neha Sen - ₹3,499)",
         payload: createPayload({
-          id: "demo_b",
+          id: "demo_2",
           event: "payment.failed",
           rawAmount: 349900,
           problem: "EXPIRED_CARD",
-          customerName: "Amit Patel",
-          customerEmail: "amit.patel@example.com",
+          customerName: "Neha Sen",
+          customerEmail: "neha.sen@example.com",
         }),
       },
       {
-        name: "Scenario C: Cancelled Subscription (Karan Johar - ₹4,999)",
+        name: "Scenario 3: Cancelled Subscription (Karan Johar - ₹4,999)",
         payload: createPayload({
-          id: "demo_c",
+          id: "demo_3",
           event: "payment.failed",
           rawAmount: 499900,
           problem: "SUBSCRIPTION_CANCELLED",
-          customerName: "Rohan Gupta",
-          customerEmail: "rohan.gupta@example.com",
+          customerName: "Karan Johar",
+          customerEmail: "karan.johar@example.com",
         }),
       },
       {
-        name: "Scenario D: High-Value Transaction > ₹25,000 (Apex Enterprise - ₹45,000)",
+        name: "Scenario 4: High-Value Enterprise Renewal > ₹25k (Arjun Enterprises - ₹48,000)",
         payload: createPayload({
-          id: "demo_d",
+          id: "demo_4",
           event: "payment.failed",
-          rawAmount: 4500000,
+          rawAmount: 4800000,
           problem: "BANK_DECLINE",
-          customerName: "Vikram Malhotra Enterprises",
-          customerEmail: "finance@vikrammalhotra.com",
+          customerName: "Arjun Enterprises",
+          customerEmail: "finance@arjunenterprises.com",
         }),
       },
     ];
@@ -174,16 +171,16 @@ export default function SimulatorPage() {
     for (let i = 0; i < demoScenarios.length; i++) {
       const s = demoScenarios[i];
       setDemoStep(i + 1);
-      setDemoLogs((prev) => [...prev, `[Running] ${s.name}...`]);
+      setDemoLogs((prev) => [...prev, `[Executing] ${s.name}...`]);
 
       const res = await triggerScenario(`demo_${i}`, s.payload);
       if (res && res.case_id) {
         setDemoLogs((prev) => [
           ...prev,
-          `✓ Case #${res.case_id} registered → AI & Policy evaluation started`,
+          `✓ Case #${res.case_id} created → Evaluated through Policy Gate`,
         ]);
       }
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, 1000));
     }
 
     setDemoLogs((prev) => [
@@ -196,7 +193,7 @@ export default function SimulatorPage() {
   const presetScenarios = [
     {
       id: "bank_decline",
-      title: "Scenario A: Temporary Bank Decline",
+      title: "1. Temporary Bank Decline",
       amount: "₹1,999",
       rawAmount: 199900,
       problem: "BANK_DECLINE",
@@ -208,11 +205,11 @@ export default function SimulatorPage() {
       iconColor: "text-[#8B7CFF]",
       expectedAI: "RETRY_PAYMENT (30m delay)",
       expectedPolicy: "APPROVED",
-      expectedOutcome: "Auto-Recovered via Inngest step",
+      expectedOutcome: "Durable Inngest scheduled retry",
     },
     {
       id: "expired_card",
-      title: "Scenario B: Expired Card Credentials",
+      title: "2. Expired Card Credentials",
       amount: "₹3,499",
       rawAmount: 349900,
       problem: "EXPIRED_CARD",
@@ -227,36 +224,68 @@ export default function SimulatorPage() {
       expectedOutcome: "Razorpay Update Link Generated",
     },
     {
+      id: "high_value",
+      title: "3. High-Value Policy Block",
+      amount: "₹48,000",
+      rawAmount: 4800000,
+      problem: "BANK_DECLINE",
+      customer: "Arjun Enterprises (Enterprise)",
+      customerName: "Arjun Enterprises",
+      customerEmail: "finance@arjunenterprises.com",
+      color: "border-amber-500/40 bg-amber-500/5 hover:border-amber-500",
+      icon: UserCheck,
+      iconColor: "text-amber-400",
+      expectedAI: "RETRY_PAYMENT",
+      expectedPolicy: "BLOCKED (> ₹25k Autonomous Limit)",
+      expectedOutcome: "Overridden to ESCALATE_HUMAN",
+    },
+    {
       id: "cancelled_sub",
-      title: "Scenario C: Cancelled Subscription",
+      title: "4. Cancelled Subscription",
       amount: "₹4,999",
       rawAmount: 499900,
       problem: "SUBSCRIPTION_CANCELLED",
-      customer: "Karan Johar (Cancelled)",
+      customer: "Karan Johar (Cancelled Sub)",
       customerName: "Karan Johar",
       customerEmail: "karan.johar@example.com",
-      color: "border-zinc-700 bg-zinc-800/10 hover:border-zinc-500",
+      color: "border-rose-500/40 bg-rose-500/5 hover:border-rose-500",
       icon: Ban,
-      iconColor: "text-zinc-400",
+      iconColor: "text-rose-400",
       expectedAI: "STOP",
       expectedPolicy: "BLOCKED (Strict Guardrail)",
-      expectedOutcome: "Safely Stopped — 0 Spam Retries",
+      expectedOutcome: "Safely Stopped — Zero Spam Retries",
     },
     {
-      id: "high_value",
-      title: "Scenario D: High-Value Enterprise Payment",
-      amount: "₹45,000",
-      rawAmount: 4500000,
-      problem: "BANK_DECLINE",
-      customer: "Apex Global Enterprise",
-      customerName: "Apex Global Enterprise",
-      customerEmail: "billing@apexglobal.com",
+      id: "max_retries",
+      title: "5. Maximum Retry Escalation",
+      amount: "₹2,499",
+      rawAmount: 249900,
+      problem: "INSUFFICIENT_FUNDS",
+      customer: "Vikram Malhotra (2 Prior Retries)",
+      customerName: "Vikram Malhotra",
+      customerEmail: "vikram@example.com",
       color: "border-orange-500/40 bg-orange-500/5 hover:border-orange-500",
-      icon: UserCheck,
+      icon: AlertTriangle,
       iconColor: "text-orange-400",
       expectedAI: "RETRY_PAYMENT",
-      expectedPolicy: "OVERRIDDEN → ESCALATE_HUMAN",
-      expectedOutcome: "Human Operations Alerted (> ₹25k limit)",
+      expectedPolicy: "ESCALATED (Max Retries Reached)",
+      expectedOutcome: "Escalated to prevent card network spam",
+    },
+    {
+      id: "unknown_fallback",
+      title: "6. AI Failure Fallback",
+      amount: "₹1,499",
+      rawAmount: 149900,
+      problem: "UNKNOWN_NETWORK_ERROR",
+      customer: "Sneha Reddy (Basic Sub)",
+      customerName: "Sneha Reddy",
+      customerEmail: "sneha@example.com",
+      color: "border-zinc-700 bg-zinc-800/10 hover:border-zinc-500",
+      icon: ShieldAlert,
+      iconColor: "text-zinc-400",
+      expectedAI: "Deterministic Fallback",
+      expectedPolicy: "APPROVED",
+      expectedOutcome: "Fallback rule engine activated safely",
     },
   ];
 
@@ -267,28 +296,25 @@ export default function SimulatorPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <h1 className="text-2xl font-bold tracking-tight text-[#F5F7FA]">
-              Live Recovery Simulator
+              Recovery Decision Simulator
             </h1>
             <span className="px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-[#8B7CFF]/15 text-[#8B7CFF] border border-[#8B7CFF]/30">
-              Interactive Test Console
+              Interactive Testbed
             </span>
           </div>
           <p className="text-xs text-[#8B929E]">
-            Trigger simulated Razorpay webhook events to watch the Gemini AI decision layer, Policy Guardrails, and Inngest state machine in real-time.
+            Dispatch simulated Razorpay webhook events to observe the AI reasoner, deterministic policy interceptor, and Inngest workflows in action.
           </p>
         </div>
 
-        {/* Action Buttons */}
+        {/* Top Actions */}
         <div className="flex items-center gap-2.5 shrink-0">
           <button
             onClick={async () => {
               try {
-                const res = await fetch("http://localhost:8000/api/demo/seed", { method: "POST" });
-                if (res.ok) {
-                  const json = await res.json();
-                  setLastResponse(json);
-                  await queryClient.invalidateQueries();
-                }
+                const res = await seedDemoDatabase();
+                setLastResponse(res);
+                await queryClient.invalidateQueries();
               } catch (e: any) {
                 setLastResponse({ error: e.message || "Failed to seed demo data" });
               }
@@ -296,7 +322,7 @@ export default function SimulatorPage() {
             className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-semibold text-[#F5F7FA] bg-[#121722] hover:bg-[#161C2A] border border-[#23262D] hover:border-emerald-500/50 transition-all cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Seed Curated Dataset (10 Cases)</span>
+            <span>Seed 10 Demo Scenarios</span>
           </button>
 
           <button
@@ -305,7 +331,7 @@ export default function SimulatorPage() {
             className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-[#8B7CFF] to-[#6366F1] hover:from-[#7966FF] hover:to-[#5558E6] shadow-md shadow-[#8B7CFF]/25 transition-all cursor-pointer disabled:opacity-50"
           >
             <Zap className={`w-4 h-4 fill-current ${isRunningDemo ? "animate-spin" : ""}`} />
-            <span>{isRunningDemo ? "Executing Demo Run..." : "▶ Run 4-Scenario Full Demo"}</span>
+            <span>{isRunningDemo ? "Executing Demo Run..." : "▶ Run 4-Scenario Demo"}</span>
           </button>
         </div>
       </div>
@@ -346,7 +372,7 @@ export default function SimulatorPage() {
               : "text-[#8B929E] hover:text-[#F5F7FA]"
           }`}
         >
-          Curated Demo Scenarios
+          Curated Scenario Presets
         </button>
         <button
           onClick={() => setActiveTab("custom")}
@@ -361,7 +387,7 @@ export default function SimulatorPage() {
       </div>
 
       {activeTab === "presets" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {presetScenarios.map((scen) => {
             const Icon = scen.icon;
             const isCurrentTriggering = isTriggering === scen.id;
@@ -389,25 +415,25 @@ export default function SimulatorPage() {
                   <div className="p-2.5 rounded-lg bg-[#090C12] border border-[#191D26] space-y-1.5 text-xs">
                     <div className="flex items-center justify-between text-[#8B929E]">
                       <span>Customer:</span>
-                      <span className="text-[#F5F7FA] font-medium">{scen.customer}</span>
+                      <span className="text-[#F5F7FA] font-medium truncate max-w-[140px]">{scen.customer}</span>
                     </div>
                     <div className="flex items-center justify-between text-[#8B929E]">
-                      <span>Expected AI Plan:</span>
-                      <span className="font-mono font-medium text-[#8B7CFF]">
+                      <span>Expected AI:</span>
+                      <span className="font-mono font-medium text-[#8B7CFF] truncate max-w-[140px]">
                         {scen.expectedAI}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-[#8B929E]">
-                      <span>Policy Check:</span>
-                      <span className="font-mono font-medium text-emerald-400">
+                      <span>Policy Gate:</span>
+                      <span className="font-mono font-medium text-emerald-400 truncate max-w-[140px]">
                         {scen.expectedPolicy}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="pt-2 flex items-center justify-between gap-3">
-                  <span className="text-[11px] text-[#8B929E] truncate">
+                <div className="pt-2 flex items-center justify-between gap-3 border-t border-[#191D26]">
+                  <span className="text-[10px] text-[#8B929E] truncate">
                     {scen.expectedOutcome}
                   </span>
                   <button
@@ -416,7 +442,7 @@ export default function SimulatorPage() {
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#161C2A] hover:bg-[#8B7CFF] border border-[#23262D] transition-all cursor-pointer shrink-0 disabled:opacity-50"
                   >
                     <Play className={`w-3 h-3 ${isCurrentTriggering ? "animate-spin" : ""}`} />
-                    <span>{isCurrentTriggering ? "Firing..." : "Dispatch Event"}</span>
+                    <span>{isCurrentTriggering ? "Dispatching..." : "Dispatch Event"}</span>
                   </button>
                 </div>
               </div>
@@ -429,10 +455,10 @@ export default function SimulatorPage() {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[#F5F7FA] flex items-center gap-2">
               <Code2 className="w-4 h-4 text-[#38BDF8]" />
-              Razorpay Webhook Payload Dispatcher
+              Webhook Payload Dispatcher
             </h3>
             <span className="text-xs font-mono text-[#8B929E]">
-              Target: POST /api/test/trigger-webhook
+              POST /api/test/trigger-webhook
             </span>
           </div>
 
@@ -448,7 +474,6 @@ export default function SimulatorPage() {
               onClick={() => {
                 try {
                   const parsed = JSON.parse(customJson);
-                  // Ensure unique ID if not customized
                   if (parsed.id?.startsWith("evt_sim")) {
                     parsed.id = `evt_sim_${Date.now()}`;
                   }
@@ -466,13 +491,13 @@ export default function SimulatorPage() {
         </div>
       )}
 
-      {/* Real-time Response Display & Action Banner */}
+      {/* Real-time Response & Trace Output */}
       {lastResponse && (
         <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-mono uppercase font-semibold text-[#8B929E] flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              FastAPI Event Processor Response
+              Pipeline Execution Trace & Event Result
             </h3>
             {lastResponse.case_id && (
               <div className="flex items-center gap-3">
@@ -481,19 +506,19 @@ export default function SimulatorPage() {
                   className="flex items-center gap-1.5 px-3 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-xs font-mono font-medium text-emerald-300 transition-colors cursor-pointer"
                 >
                   <DollarSign className="w-3.5 h-3.5" />
-                  <span>Simulate Payment Recovery</span>
+                  <span>Simulate Payment Captured</span>
                 </button>
                 <Link
                   href={`/cases/${lastResponse.case_id}`}
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-[#8B7CFF]/15 hover:bg-[#8B7CFF]/25 border border-[#8B7CFF]/30 text-xs font-mono font-medium text-[#8B7CFF] transition-colors"
                 >
-                  <span>Open Case #{lastResponse.case_id}</span>
+                  <span>Open Forensics #{lastResponse.case_id}</span>
                   <ExternalLink className="w-3 h-3" />
                 </Link>
               </div>
             )}
           </div>
-          <pre className="p-3 bg-black rounded-lg text-xs font-mono text-emerald-400 overflow-x-auto">
+          <pre className="p-3.5 bg-black rounded-lg text-xs font-mono text-emerald-400 overflow-x-auto max-h-72">
             {JSON.stringify(lastResponse, null, 2)}
           </pre>
         </div>

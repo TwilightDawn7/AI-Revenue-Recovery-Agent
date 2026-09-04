@@ -1,51 +1,17 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { formatCurrency, formatPercent } from "@/lib/formatters";
+import { formatCurrency } from "@/lib/formatters";
+import { fetchEvaluationResults, runEvaluationBenchmark } from "@/lib/api/evaluation";
+import { EvaluationPayload } from "@/types";
 import {
   BarChart3,
-  TrendingUp,
-  ShieldCheck,
-  Zap,
-  CheckCircle2,
   Sparkles,
-  ArrowUpRight,
-  RotateCcw,
-  Ban,
-  UserCheck,
   Play,
   Layers,
   FlaskConical,
-  FileText
+  FileText,
 } from "lucide-react";
-
-interface BenchmarkRow {
-  strategy: string;
-  total_cases: number;
-  revenue_at_risk: number;
-  recovered_revenue: number;
-  recovery_rate: number;
-  recovered_cases: number;
-  escalated_cases: number;
-  stopped_cases: number;
-  attempts_sent: number;
-  policy_violations: number;
-  wasted_retries: number;
-}
-
-interface AblationRow {
-  configuration: string;
-  recovered_revenue: number;
-  recovery_rate: number;
-  attempts_sent: number;
-  escalated_cases: number;
-}
-
-interface EvaluationPayload {
-  benchmark_1000_cases: BenchmarkRow[];
-  ablation_study: AblationRow[];
-  benchmark_100_cases_dev: BenchmarkRow[];
-}
 
 export default function EvaluationPage() {
   const [data, setData] = useState<EvaluationPayload | null>(null);
@@ -54,34 +20,28 @@ export default function EvaluationPage() {
   const [activeTab, setActiveTab] = useState<"1000" | "ablation" | "100">("1000");
 
   useEffect(() => {
-    fetchResults();
-  }, []);
+    let ignore = false;
+    fetchEvaluationResults()
+      .then((json) => {
+        if (!ignore) setData(json);
+      })
+      .catch((e) => {
+        if (!ignore) console.error("Failed to load evaluation results:", e);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
 
-  const fetchResults = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch("http://localhost:8000/api/evaluation/results");
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
-      }
-    } catch (e) {
-      console.error("Failed to load evaluation results:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   const handleRunBenchmark = async () => {
     try {
       setRunning(true);
-      const res = await fetch("http://localhost:8000/api/evaluation/run", {
-        method: "POST"
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
-      }
+      const json = await runEvaluationBenchmark();
+      setData(json);
     } catch (e) {
       console.error("Benchmark run failed:", e);
     } finally {
@@ -103,8 +63,26 @@ export default function EvaluationPage() {
   }
 
   const b1000 = data.benchmark_1000_cases || [];
-  const aiAgent = b1000.find((b) => b.strategy.includes("AI Recovery Agent")) || b1000[3];
-  const alwaysRetry = b1000.find((b) => b.strategy.includes("Always Retry")) || b1000[0];
+  const aiAgent = b1000.find((b) => b.strategy.includes("AI Recovery Agent")) || b1000[3] || {
+    recovered_revenue: 0,
+    recovery_rate: 0,
+    attempts_sent: 0,
+    stopped_cases: 0,
+    escalated_cases: 0,
+    policy_violations: 0,
+    wasted_retries: 0,
+    revenue_at_risk: 0,
+  };
+  const alwaysRetry = b1000.find((b) => b.strategy.includes("Always Retry")) || b1000[0] || {
+    recovered_revenue: 0,
+    recovery_rate: 0,
+    attempts_sent: 0,
+    stopped_cases: 0,
+    escalated_cases: 0,
+    policy_violations: 0,
+    wasted_retries: 0,
+    revenue_at_risk: 0,
+  };
 
   const upliftRevenue = (aiAgent?.recovered_revenue || 0) - (alwaysRetry?.recovered_revenue || 0);
   const upliftRate = (aiAgent?.recovery_rate || 0) - (alwaysRetry?.recovery_rate || 0);
@@ -130,10 +108,10 @@ export default function EvaluationPage() {
         <button
           onClick={handleRunBenchmark}
           disabled={running}
-          className="flex items-center gap-2 px-4 py-2 bg-[#8B7CFF] hover:bg-[#7A6AE6] disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-[#8B7CFF] hover:bg-[#7A6AE6] disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm cursor-pointer shrink-0"
         >
-          <Play className="w-3.5 h-3.5" />
-          {running ? "Running 1,000 Scenarios..." : "Re-Run 1,000 Benchmark"}
+          <Play className={`w-3.5 h-3.5 ${running ? "animate-spin" : ""}`} />
+          <span>{running ? "Executing 1,000 Scenarios..." : "Re-Run 1,000 Benchmark"}</span>
         </button>
       </div>
 
@@ -147,7 +125,7 @@ export default function EvaluationPage() {
             {aiAgent?.recovery_rate.toFixed(2)}%
           </div>
           <div className="text-[11px] text-[#8B929E] flex items-center gap-1">
-            <span>vs Always Retry {alwaysRetry?.recovery_rate.toFixed(2)}%</span>
+            <span>vs Baseline {alwaysRetry?.recovery_rate.toFixed(2)}%</span>
             <span className="text-emerald-400 font-semibold font-mono">
               (+{upliftRate.toFixed(1)}pp)
             </span>
@@ -156,7 +134,7 @@ export default function EvaluationPage() {
 
         <div className="p-5 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-1.5">
           <span className="text-xs text-[#8B929E] font-medium">
-            Net Revenue Recovered
+            Recovered Revenue
           </span>
           <div className="text-3xl font-bold font-mono text-[#8B7CFF]">
             {formatCurrency(aiAgent?.recovered_revenue || 0, true)}
@@ -186,7 +164,29 @@ export default function EvaluationPage() {
             {alwaysRetry?.wasted_retries || 235} Retries
           </div>
           <div className="text-[11px] text-[#8B929E]">
-            Halted on cancelled & invalid credentials
+            Halted on cancelled accounts & invalid cards
+          </div>
+        </div>
+      </div>
+
+      {/* Benchmark Methodology Statement */}
+      <div className="p-4 rounded-xl bg-[#0D1017] border border-[#23262D] space-y-2">
+        <div className="flex items-center gap-2 text-xs font-semibold text-[#F5F7FA]">
+          <FileText className="w-4 h-4 text-[#8B7CFF]" />
+          <span>Benchmark Methodology & Experimental Setup</span>
+        </div>
+        <div className="text-xs text-[#8B929E] leading-relaxed grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+          <div>
+            <span className="text-[#F5F7FA] font-medium block">Dataset:</span>
+            <span>1,000 deterministic scenarios across bank declines, expired cards, insufficient funds, and cancellations.</span>
+          </div>
+          <div>
+            <span className="text-[#F5F7FA] font-medium block">Ground-Truth Outcome Model:</span>
+            <span>Deterministic simulation model with PRNG Seed <code className="font-mono text-emerald-400">42</code>.</span>
+          </div>
+          <div>
+            <span className="text-[#F5F7FA] font-medium block">Policy Enforcement:</span>
+            <span>All strategies subjected to identical merchant safety guardrails and autonomous limits.</span>
           </div>
         </div>
       </div>
@@ -195,7 +195,7 @@ export default function EvaluationPage() {
       <div className="flex items-center gap-2 border-b border-[#23262D] pb-2">
         <button
           onClick={() => setActiveTab("1000")}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
             activeTab === "1000"
               ? "bg-[#1C2230] text-[#F5F7FA] border border-[#23262D]"
               : "text-[#8B929E] hover:text-[#F5F7FA]"
@@ -205,7 +205,7 @@ export default function EvaluationPage() {
         </button>
         <button
           onClick={() => setActiveTab("ablation")}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
             activeTab === "ablation"
               ? "bg-[#1C2230] text-[#F5F7FA] border border-[#23262D]"
               : "text-[#8B929E] hover:text-[#F5F7FA]"
@@ -215,7 +215,7 @@ export default function EvaluationPage() {
         </button>
         <button
           onClick={() => setActiveTab("100")}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
             activeTab === "100"
               ? "bg-[#1C2230] text-[#F5F7FA] border border-[#23262D]"
               : "text-[#8B929E] hover:text-[#F5F7FA]"
@@ -243,9 +243,9 @@ export default function EvaluationPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead>
-                <tr className="border-b border-[#23262D] text-[#8B929E] font-medium font-mono">
+                <tr className="border-b border-[#23262D] text-[#8B929E] font-medium font-mono text-[11px]">
                   <th className="pb-3 pr-4">Strategy</th>
-                  <th className="pb-3 px-4 text-right">Revenue At Risk</th>
+                  <th className="pb-3 px-4 text-right">Revenue at Risk</th>
                   <th className="pb-3 px-4 text-right">Recovered Revenue</th>
                   <th className="pb-3 px-4 text-right">Recovery Rate</th>
                   <th className="pb-3 px-4 text-right">Recovered Cases</th>
@@ -258,22 +258,45 @@ export default function EvaluationPage() {
                 {b1000.map((row, idx) => {
                   const isAgent = row.strategy.includes("AI Recovery Agent");
                   return (
-                    <tr key={idx} className={isAgent ? "bg-[#8B7CFF]/10 text-[#F5F7FA] font-bold" : "text-[#8B929E]"}>
+                    <tr
+                      key={idx}
+                      className={
+                        isAgent
+                          ? "bg-[#8B7CFF]/10 text-[#F5F7FA] font-bold"
+                          : "text-[#8B929E]"
+                      }
+                    >
                       <td className="py-3 pr-4 font-sans font-medium flex items-center gap-1.5">
                         {isAgent && <Sparkles className="w-3.5 h-3.5 text-[#8B7CFF]" />}
                         {row.strategy}
                       </td>
-                      <td className="py-3 px-4 text-right">₹{row.revenue_at_risk.toLocaleString()}</td>
-                      <td className={`py-3 px-4 text-right ${isAgent ? "text-emerald-400" : ""}`}>
+                      <td className="py-3 px-4 text-right">
+                        ₹{row.revenue_at_risk.toLocaleString()}
+                      </td>
+                      <td
+                        className={`py-3 px-4 text-right ${
+                          isAgent ? "text-emerald-400" : ""
+                        }`}
+                      >
                         ₹{row.recovered_revenue.toLocaleString()}
                       </td>
-                      <td className={`py-3 px-4 text-right ${isAgent ? "text-emerald-400 font-bold" : ""}`}>
+                      <td
+                        className={`py-3 px-4 text-right ${
+                          isAgent ? "text-emerald-400 font-bold" : ""
+                        }`}
+                      >
                         {row.recovery_rate.toFixed(2)}%
                       </td>
                       <td className="py-3 px-4 text-right">{row.recovered_cases}</td>
                       <td className="py-3 px-4 text-right">{row.attempts_sent}</td>
                       <td className="py-3 px-4 text-right">{row.wasted_retries}</td>
-                      <td className={`py-3 pl-4 text-right ${row.policy_violations > 0 ? "text-rose-400 font-bold" : "text-emerald-400"}`}>
+                      <td
+                        className={`py-3 pl-4 text-right ${
+                          row.policy_violations > 0
+                            ? "text-rose-400 font-bold"
+                            : "text-emerald-400"
+                        }`}
+                      >
                         {row.policy_violations}
                       </td>
                     </tr>
@@ -291,32 +314,49 @@ export default function EvaluationPage() {
           <div className="flex items-center gap-2">
             <FlaskConical className="w-4 h-4 text-[#8B7CFF]" />
             <h2 className="text-sm font-semibold text-[#F5F7FA]">
-              AI Ablation Study: Impact of Customer Context
+              AI Ablation Study: Value of Customer Context & EV Valuation
             </h2>
           </div>
           <p className="text-xs text-[#8B929E] leading-relaxed">
-            Measures the incremental value provided by contextual customer history (tenure, previous renewal track record, lifetime value) vs static failure-code rules.
+            Demonstrates whether contextual intelligence (customer tenure, historical renewal consistency, lifetime value) delivers statistically significant lift compared to static rules and unassisted AI.
           </p>
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead>
-                <tr className="border-b border-[#23262D] text-[#8B929E] font-medium font-mono">
+                <tr className="border-b border-[#23262D] text-[#8B929E] font-medium font-mono text-[11px]">
                   <th className="pb-3 pr-4">Configuration</th>
                   <th className="pb-3 px-4 text-right">Recovered Revenue</th>
                   <th className="pb-3 px-4 text-right">Recovery Rate</th>
-                  <th className="pb-3 px-4 text-right">Attempts Sent</th>
+                  <th className="pb-3 px-4 text-right">Attempts Dispatched</th>
                   <th className="pb-3 pl-4 text-right">Human Escalations</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#23262D] font-mono">
                 {data.ablation_study.map((row, idx) => (
-                  <tr key={idx} className={idx === 2 ? "bg-emerald-500/10 text-[#F5F7FA] font-bold" : "text-[#8B929E]"}>
-                    <td className="py-3 pr-4 font-sans font-medium">{row.configuration}</td>
-                    <td className={`py-3 px-4 text-right ${idx === 2 ? "text-emerald-400 font-bold" : ""}`}>
+                  <tr
+                    key={idx}
+                    className={
+                      idx === 2
+                        ? "bg-emerald-500/10 text-[#F5F7FA] font-bold"
+                        : "text-[#8B929E]"
+                    }
+                  >
+                    <td className="py-3 pr-4 font-sans font-medium">
+                      {row.configuration}
+                    </td>
+                    <td
+                      className={`py-3 px-4 text-right ${
+                        idx === 2 ? "text-emerald-400 font-bold" : ""
+                      }`}
+                    >
                       ₹{row.recovered_revenue.toLocaleString()}
                     </td>
-                    <td className={`py-3 px-4 text-right ${idx === 2 ? "text-emerald-400 font-bold" : ""}`}>
+                    <td
+                      className={`py-3 px-4 text-right ${
+                        idx === 2 ? "text-emerald-400 font-bold" : ""
+                      }`}
+                    >
                       {row.recovery_rate.toFixed(2)}%
                     </td>
                     <td className="py-3 px-4 text-right">{row.attempts_sent}</td>
@@ -336,28 +376,36 @@ export default function EvaluationPage() {
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-sky-400" />
               <h2 className="text-sm font-semibold text-[#F5F7FA]">
-                Fast Development Benchmark (100 Scenarios)
+                Development Validation Benchmark (100 Scenarios)
               </h2>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead>
-                <tr className="border-b border-[#23262D] text-[#8B929E] font-medium font-mono">
+                <tr className="border-b border-[#23262D] text-[#8B929E] font-medium font-mono text-[11px]">
                   <th className="pb-3 pr-4">Strategy</th>
-                  <th className="pb-3 px-4 text-right">Revenue At Risk</th>
+                  <th className="pb-3 px-4 text-right">Revenue at Risk</th>
                   <th className="pb-3 px-4 text-right">Recovered Revenue</th>
                   <th className="pb-3 px-4 text-right">Recovery Rate</th>
                   <th className="pb-3 pl-4 text-right">Attempts</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#23262D] font-mono">
-                {data.benchmark_100_cases_dev.map((row, idx) => (
+                {data.benchmark_100_cases_dev?.map((row, idx) => (
                   <tr key={idx} className="text-[#8B929E]">
-                    <td className="py-3 pr-4 font-sans font-medium text-[#F5F7FA]">{row.strategy}</td>
-                    <td className="py-3 px-4 text-right">₹{row.revenue_at_risk.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-right text-emerald-400">₹{row.recovered_revenue.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-right font-bold text-emerald-400">{row.recovery_rate.toFixed(2)}%</td>
+                    <td className="py-3 pr-4 font-sans font-medium text-[#F5F7FA]">
+                      {row.strategy}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      ₹{row.revenue_at_risk.toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-right text-emerald-400">
+                      ₹{row.recovered_revenue.toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-right font-bold text-emerald-400">
+                      {row.recovery_rate.toFixed(2)}%
+                    </td>
                     <td className="py-3 pl-4 text-right">{row.attempts_sent}</td>
                   </tr>
                 ))}
@@ -366,17 +414,6 @@ export default function EvaluationPage() {
           </div>
         </div>
       )}
-
-      {/* Grounding and Transparency Explainer */}
-      <div className="p-4 rounded-xl bg-[#0D1017] border border-[#23262D] text-xs text-[#8B929E] space-y-1.5">
-        <div className="flex items-center gap-1.5 font-semibold text-[#F5F7FA]">
-          <FileText className="w-4 h-4 text-[#8B7CFF]" />
-          Benchmark Grounding & Transparency Statement
-        </div>
-        <p className="leading-relaxed">
-          All metrics on this page are computed by executing 1,000 discrete simulated transactions through each respective decision strategy and policy layer with seed <code className="font-mono text-emerald-400">42</code>. No metrics are extrapolated from smaller samples. The AI Agent demonstrates a <strong>+{(aiAgent?.recovery_rate - (alwaysRetry?.recovery_rate || 0)).toFixed(1)}pp recovery lift</strong> while achieving <strong>zero policy violations</strong>.
-        </p>
-      </div>
     </div>
   );
 }

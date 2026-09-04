@@ -4,16 +4,10 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useMounted } from "@/hooks/use-mounted";
 import { useCases } from "@/hooks/use-cases";
-import { formatCurrency, formatDate, formatRelativeTime } from "@/lib/formatters";
+import { formatCurrency, formatRelativeTime } from "@/lib/formatters";
 import {
   Activity,
-  Sparkles,
-  ShieldCheck,
-  CheckCircle2,
-  AlertTriangle,
-  RotateCcw,
   ExternalLink,
-  Filter,
 } from "lucide-react";
 
 export default function ActivityPage() {
@@ -48,12 +42,14 @@ export default function ActivityPage() {
           amount: c.amount_at_risk,
           time: l.created_at,
           type:
-            l.event_type.includes("WEBHOOK")
+            l.event_type.includes("WEBHOOK") || l.event_type.includes("PAYMENT_FAILED")
               ? "WEBHOOK"
               : l.event_type.includes("AI")
               ? "AI_DECISION"
-              : l.event_type.includes("POLICY")
+              : l.event_type.includes("POLICY") || l.event_type.includes("GUARDRAIL")
               ? "POLICY"
+              : l.event_type.includes("RECOVERED") || l.event_type.includes("CAPTURED")
+              ? "CAPTURED"
               : "ACTION",
           title: l.event_type,
           detail: `Actor: ${l.actor}`,
@@ -72,23 +68,25 @@ export default function ActivityPage() {
           time: d.created_at,
           type: "AI_DECISION",
           title: `AI Reasoning: ${d.recommended_action}`,
-          detail: `${Math.round(d.confidence * 100)}% confidence • ${d.diagnosis}`,
-          actor: "Gemini 1.5 Flash",
+          detail: `${Math.round((d.confidence || 0.85) * 100)}% confidence • ${d.diagnosis}`,
+          actor: d.model_name || "Gemini",
         });
       });
 
-      // 3. Actions
+      // 3. Recovery Actions
       c.recovery_actions?.forEach((a) => {
+        const isCaptured =
+          a.status === "captured" ||
+          a.status === "success" ||
+          a.action_type === "PAYMENT_CAPTURED";
+
         allEvents.push({
           id: `act-log-${a.id}`,
           caseId: c.id,
           customerName: c.customer?.name || "Customer",
           amount: c.amount_at_risk,
           time: a.executed_at,
-          type:
-            a.status === "captured" || a.status === "success"
-              ? "CAPTURED"
-              : "ACTION",
+          type: isCaptured ? "CAPTURED" : "ACTION",
           title: `Action Executed: ${a.action_type}`,
           detail: a.result_summary || `Attempt #${a.attempt_number} · Status: ${a.status}`,
           actor: "Action Executor / Razorpay",
@@ -108,8 +106,8 @@ export default function ActivityPage() {
     { label: "All Events", value: "ALL" },
     { label: "AI Reasoning", value: "AI_DECISION" },
     { label: "Webhooks", value: "WEBHOOK" },
-    { label: "Actions Executed", value: "ACTION" },
-    { label: "Captured / Recovered", value: "CAPTURED" },
+    { label: "Actions Dispatched", value: "ACTION" },
+    { label: "Recovered / Captured", value: "CAPTURED" },
   ];
 
   return (
@@ -123,16 +121,16 @@ export default function ActivityPage() {
             </h1>
             <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Live Feed Active
+              Live Sync
             </span>
           </div>
           <p className="text-xs text-[#8B929E]">
-            Immutable chronological trace of all Razorpay webhooks, LLM inferences, guardrail checks, and executed actions.
+            Immutable chronological audit stream of all Razorpay webhooks, AI inferences, policy validations, and dispatched recovery actions.
           </p>
         </div>
 
         <div className="flex items-center gap-2 font-mono text-xs text-[#8B929E] bg-[#0D1017] px-3 py-1.5 rounded-lg border border-[#23262D]">
-          <span>Captured Events:</span>
+          <span>Total Stream Events:</span>
           <span className="font-bold text-[#F5F7FA]">{events.length}</span>
         </div>
       </div>
@@ -175,7 +173,7 @@ export default function ActivityPage() {
               No events recorded yet
             </div>
             <p className="text-[11px] max-w-sm mx-auto">
-              Run the recovery simulator to trigger live webhook events and watch the feed populate in real-time.
+              Run a recovery simulator scenario to trigger webhook events and view the live audit trail populate in real time.
             </p>
           </div>
         ) : (
@@ -194,6 +192,8 @@ export default function ActivityPage() {
                         ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
                         : evt.type === "WEBHOOK"
                         ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                        : evt.type === "POLICY"
+                        ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
                         : "bg-sky-500/15 text-sky-400 border-sky-500/30"
                     }`}
                   >
